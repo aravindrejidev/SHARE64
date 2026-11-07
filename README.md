@@ -2,13 +2,24 @@
 
 High-performance local Wi-Fi file sharing for Android (phone + TV). Package: `com.share64.app`.
 
-## Part 1 (this archive): project skeleton + `:core-cpp`
+## Part 1: project skeleton + `:core-cpp`
 
 ```
 core-cpp/src/main/cpp/     C++17 engine (CMake/NDK) + JNI bridge
 core-cpp/src/main/java/    TransferEngine.kt (Flows) + TransferEvent.kt
 core-cpp/src/hosttest/     loopback + fault-injection test suite (runs on any Linux box)
 .github/workflows/engine-tests.yml   manual: builds and runs that suite
+```
+
+## Part 2: `:core-network`
+
+```
+core-network/src/main/java/com/share64/network/
+  Share64Node.kt        engine + discovery in one object (what the app modules use)
+  DiscoveryManager.kt   NsdManager advertise/discover, serialized resolver, TCP liveness, auto-restart
+  NetworkWatcher.kt     LAN IPv4 changes (Wi-Fi, Ethernet, hotspot)
+  PeerTxt / PeerRegistry / AddressParser / HandshakeProbe / LocalAddresses   pure Kotlin, unit-tested
+  LocalNetworkAccess.kt Android 17 ACCESS_LOCAL_NETWORK helper (only matters once targetSdk >= 37)
 ```
 
 Build one ABI only: `./gradlew :core-cpp:assembleRelease -Pshare64.abis=arm64-v8a`

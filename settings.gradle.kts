@@ -17,4 +17,5 @@ dependencyResolutionManagement {
 rootProject.name = "SHARE64"
 
 include(":core-cpp")
-// Next parts add: include(":core-network"), include(":app-mobile"), include(":app-tv")
+include(":core-network")
+// Next parts add: include(":app-mobile"), include(":app-tv")
