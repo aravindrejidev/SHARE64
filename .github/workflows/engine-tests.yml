@@ -1,0 +1,23 @@
+name: Engine tests
+
+# Manual only. Builds the C++ engine on the runner and runs the loopback / fault-injection suite
+# (plain, then under AddressSanitizer + UBSan).
+on:
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Plain build + tests
+        run: |
+          cmake -S core-cpp/src/main/cpp -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+          ./build/share64_host_test
+      - name: ASan + UBSan build + tests
+        run: |
+          cmake -S core-cpp/src/main/cpp -B build-asan -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -g -O1"
+          cmake --build build-asan -j"$(nproc)"
+          ./build-asan/share64_host_test
