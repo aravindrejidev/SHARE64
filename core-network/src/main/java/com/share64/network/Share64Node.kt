@@ -63,8 +63,8 @@ class Share64Node(
     }
 
     /** Peer ids are stable, so an interrupted transfer resumes even after the peer's IP changed. */
-    fun send(peer: PeerDevice, file: File): Long =
-        engine.sendFile(peer.host, peer.port, file, peerKey = peer.id, displayName = file.name)
+    fun send(peer: PeerDevice, file: File, displayName: String = file.name): Long =
+        engine.sendFile(peer.host, peer.port, file, peerKey = peer.id, displayName = displayName)
 
     /** For content:// sources; the engine takes ownership of [descriptor]. */
     fun send(peer: PeerDevice, descriptor: ParcelFileDescriptor, displayName: String): Long =

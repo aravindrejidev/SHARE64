@@ -18,4 +18,6 @@ rootProject.name = "SHARE64"
 
 include(":core-cpp")
 include(":core-network")
-// Next parts add: include(":app-mobile"), include(":app-tv")
+include(":core-app")
+include(":app-mobile")
+// Next part adds: include(":app-tv")

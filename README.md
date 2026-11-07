@@ -22,6 +22,16 @@ core-network/src/main/java/com/share64/network/
   LocalNetworkAccess.kt Android 17 ACCESS_LOCAL_NETWORK helper (only matters once targetSdk >= 37)
 ```
 
+## Part 3: `:core-app` + `:app-mobile`
+
+```
+core-app/     shared by phone and TV: ShareService (foreground service owning the node), notifications
+              with Accept/Decline, Wi-Fi/wake locks while transferring, export to Downloads/SHARE64,
+              Uri -> transfer helper, formatting + transfer presenter (unit-tested)
+app-mobile/   Jetpack Compose, Material 3 + dynamic color: device grid, transfer cards, bottom sheets,
+              incoming-file dialog, settings, "Share to SHARE64" from any app (applicationId com.share64.app)
+```
+
 Build one ABI only: `./gradlew :core-cpp:assembleRelease -Pshare64.abis=arm64-v8a`
 Run the engine tests locally:
 `cmake -S core-cpp/src/main/cpp -B build && cmake --build build && ./build/share64_host_test`
