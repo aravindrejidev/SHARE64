@@ -1,0 +1,258 @@
+name: Release
+
+# Manual only. Builds the phone and/or TV app for every ABI in parallel (one job per
+# app x ABI, plus one universal APK per app), then optionally publishes a GitHub Release.
+#
+# Optional repository secrets for release signing (otherwise release APKs use the debug key):
+#   SHARE64_KEYSTORE_BASE64   base64 of your .jks keystore
+#   SHARE64_KEYSTORE_PASSWORD, SHARE64_KEY_ALIAS, SHARE64_KEY_PASSWORD
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: "Version name, e.g. 1.0.0"
+        required: true
+        type: string
+        default: "1.0.0"
+      version_code:
+        description: "Version code (integer), e.g. 100"
+        required: true
+        type: string
+        default: "100"
+      target_device:
+        description: "Which app to build"
+        required: true
+        type: choice
+        options:
+          - all
+          - phone
+          - tv
+        default: all
+      build_type:
+        description: "Build type"
+        required: true
+        type: choice
+        options:
+          - release
+          - debug
+        default: release
+      publish_release:
+        description: "Create or update a GitHub Release with the APKs"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version_name }}-${{ inputs.build_type }}
+  cancel-in-progress: false
+
+env:
+  NDK_VERSION: "27.3.13750724"
+  CMAKE_VERSION: "3.22.1"
+
+jobs:
+  prepare:
+    name: Validate and plan
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - name: Validate inputs
+        env:
+          VERSION_NAME: ${{ inputs.version_name }}
+          VERSION_CODE: ${{ inputs.version_code }}
+        run: |
+          if ! [[ "$VERSION_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::version_name must look like 1.2.3 (optionally 1.2.3-beta.1)"
+            exit 1
+          fi
+          if ! [[ "$VERSION_CODE" =~ ^[1-9][0-9]{0,8}$ ]] || [ "$VERSION_CODE" -gt 2100000000 ]; then
+            echo "::error::version_code must be a positive integer up to 2100000000"
+            exit 1
+          fi
+      - name: Plan build matrix
+        id: plan
+        env:
+          TARGET: ${{ inputs.target_device }}
+          BUILD_TYPE: ${{ inputs.build_type }}
+          VERSION_NAME: ${{ inputs.version_name }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          target = os.environ["TARGET"]
+          devices = {"all": ["phone", "tv"], "phone": ["phone"], "tv": ["tv"]}[target]
+          module = {"phone": "app-mobile", "tv": "app-tv"}
+          entries = []
+          for d in devices:
+              for abi in ("armeabi-v7a", "arm64-v8a", "x86_64"):
+                  entries.append({"device": d, "module": module[d], "label": abi, "abis": abi, "universal": "false"})
+              entries.append({"device": d, "module": module[d], "label": "universal",
+                              "abis": "armeabi-v7a,arm64-v8a,x86_64", "universal": "true"})
+          suffix = "" if os.environ["BUILD_TYPE"] == "release" else "-debug"
+          print("matrix=" + json.dumps({"include": entries}))
+          print("tag=v" + os.environ["VERSION_NAME"] + suffix)
+          PY
+
+  verify:
+    name: Verify (engine + unit tests)
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: C++ engine loopback and fault-injection tests
+        run: |
+          cmake -S core-cpp/src/main/cpp -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+          ./build/share64_host_test
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: JVM unit tests
+        run: |
+          chmod +x gradlew
+          ./gradlew :core-network:testDebugUnitTest :core-app:testDebugUnitTest -Pshare64.abis=arm64-v8a --stacktrace
+
+  build:
+    name: ${{ matrix.device }} / ${{ matrix.label }}
+    needs: [prepare, verify]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      SHARE64_KEYSTORE_PASSWORD: ${{ secrets.SHARE64_KEYSTORE_PASSWORD }}
+      SHARE64_KEY_ALIAS: ${{ secrets.SHARE64_KEY_ALIAS }}
+      SHARE64_KEY_PASSWORD: ${{ secrets.SHARE64_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install NDK and CMake
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "ndk;${NDK_VERSION}" "cmake;${CMAKE_VERSION}" > /dev/null
+      - name: Prepare release signing
+        if: ${{ inputs.build_type == 'release' }}
+        env:
+          KEYSTORE_B64: ${{ secrets.SHARE64_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "SHARE64_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No SHARE64_KEYSTORE_BASE64 secret: release APKs are signed with the DEBUG key (fine for testing, not for distribution)."
+          fi
+      - name: Build ${{ matrix.module }} (${{ matrix.label }})
+        env:
+          MODULE: ${{ matrix.module }}
+          ABIS: ${{ matrix.abis }}
+          UNIVERSAL: ${{ matrix.universal }}
+          VERSION_NAME: ${{ inputs.version_name }}
+          VERSION_CODE: ${{ inputs.version_code }}
+          BUILD_TYPE: ${{ inputs.build_type }}
+        run: |
+          chmod +x gradlew
+          TASK="assemble$(tr '[:lower:]' '[:upper:]' <<< "${BUILD_TYPE:0:1}")${BUILD_TYPE:1}"
+          ./gradlew ":${MODULE}:${TASK}" \
+            -Pshare64.abis="$ABIS" \
+            -Pshare64.universal="$UNIVERSAL" \
+            -Pshare64.versionName="$VERSION_NAME" \
+            -Pshare64.versionCode="$VERSION_CODE" \
+            --stacktrace
+      - name: Collect and verify APK
+        env:
+          MODULE: ${{ matrix.module }}
+          DEVICE: ${{ matrix.device }}
+          LABEL: ${{ matrix.label }}
+          ABIS: ${{ matrix.abis }}
+          UNIVERSAL: ${{ matrix.universal }}
+          VERSION_NAME: ${{ inputs.version_name }}
+          BUILD_TYPE: ${{ inputs.build_type }}
+        run: |
+          OUT="${MODULE}/build/outputs/apk/${BUILD_TYPE}"
+          if [ "$UNIVERSAL" = "true" ]; then
+            SRC="$(find "$OUT" -name '*universal*.apk' | head -n1)"
+          else
+            SRC="$(find "$OUT" -name "*${ABIS}*.apk" | head -n1)"
+          fi
+          if [ -z "$SRC" ]; then
+            echo "::error::No APK found in $OUT"
+            find "$OUT" -type f
+            exit 1
+          fi
+          mkdir -p dist
+          DEST="dist/SHARE64-${DEVICE}-${VERSION_NAME}-${LABEL}-${BUILD_TYPE}.apk"
+          cp "$SRC" "$DEST"
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)"
+          "$APKSIGNER" verify --print-certs "$DEST" | head -n 3
+          echo "| \`$(basename "$DEST")\` | $(du -h "$DEST" | cut -f1) |" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ matrix.device }}-${{ matrix.label }}
+          path: dist/*.apk
+          if-no-files-found: error
+      - name: Upload R8 mapping (for de-obfuscating crash reports)
+        if: ${{ matrix.universal == 'true' && inputs.build_type == 'release' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mapping-${{ matrix.device }}
+          path: ${{ matrix.module }}/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: warn
+
+  release:
+    name: Publish GitHub Release
+    if: ${{ inputs.publish_release }}
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: apk-*
+          path: dist
+          merge-multiple: true
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION_NAME: ${{ inputs.version_name }}
+          VERSION_CODE: ${{ inputs.version_code }}
+          BUILD_TYPE: ${{ inputs.build_type }}
+          TARGET: ${{ inputs.target_device }}
+        run: |
+          cd dist
+          sha256sum ./*.apk > SHA256SUMS.txt
+          {
+            echo "SHARE64 ${VERSION_NAME} (build ${VERSION_CODE}, ${BUILD_TYPE}) for: ${TARGET}"
+            echo
+            echo "Commit: ${GITHUB_SHA}"
+            echo
+            echo "- \`*-universal-*.apk\` works on any supported device."
+            echo "- \`*-arm64-v8a-*.apk\` is for most modern phones/TVs; \`armeabi-v7a\` for 32-bit ARM; \`x86_64\` for emulators/ChromeOS."
+            echo
+            echo "SHA-256:"
+            echo '```'
+            cat SHA256SUMS.txt
+            echo '```'
+          } > ../notes.md
+          cd ..
+          FLAGS=""
+          if [ "$BUILD_TYPE" != "release" ]; then FLAGS="--prerelease"; fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
+              --title "SHARE64 ${VERSION_NAME} (${BUILD_TYPE})" \
+              --notes-file notes.md --target "$GITHUB_SHA" $FLAGS
+          fi

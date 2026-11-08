@@ -3,7 +3,7 @@ name: Engine tests
 # Manual only.
 #  - host-tests:     builds the C++ engine on the runner and runs the loopback / fault-injection suite
 #                    (plain, then under AddressSanitizer + UBSan)
-#  - android-build:  compiles the NDK library, Kotlin modules and the phone app (arm64-v8a only, fast)
+#  - android-build:  compiles the NDK library, Kotlin modules and both apps (arm64-v8a only, fast)
 #                    and runs the JVM unit tests of :core-network and :core-app
 on:
   workflow_dispatch:
@@ -38,10 +38,12 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :core-cpp:assembleDebug :core-network:assembleDebug :core-app:assembleDebug \
-            :core-network:testDebugUnitTest :core-app:testDebugUnitTest :app-mobile:assembleDebug \
+            :core-network:testDebugUnitTest :core-app:testDebugUnitTest :app-mobile:assembleDebug :app-tv:assembleDebug \
             -Pshare64.abis=arm64-v8a -Pshare64.universal=false --stacktrace
-      - name: Upload debug APK
+      - name: Upload debug APKs
         uses: actions/upload-artifact@v4
         with:
-          name: share64-mobile-debug
-          path: app-mobile/build/outputs/apk/debug/*.apk
+          name: share64-debug-apks
+          path: |
+            app-mobile/build/outputs/apk/debug/*.apk
+            app-tv/build/outputs/apk/debug/*.apk

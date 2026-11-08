@@ -32,6 +32,20 @@ app-mobile/   Jetpack Compose, Material 3 + dynamic color: device grid, transfer
               incoming-file dialog, settings, "Share to SHARE64" from any app (applicationId com.share64.app)
 ```
 
+## Part 4: `:app-tv` + release workflow
+
+```
+app-tv/                    Compose for TV-style UI without extra libraries: dark 10-foot theme,
+                           D-pad focus rings, Leanback launcher + banner, incoming/outgoing dashboard
+.github/workflows/release.yml   manual: version_name, version_code, target_device, build_type
+```
+
+`release.yml` plans a matrix of one job per app x ABI (armeabi-v7a, arm64-v8a, x86_64) plus one
+universal APK per app, so NDK compilation runs in parallel. It validates inputs, runs the engine and
+unit tests first, verifies every APK signature, and can publish a GitHub Release with SHA-256 sums.
+Release signing secrets (optional): `SHARE64_KEYSTORE_BASE64`, `SHARE64_KEYSTORE_PASSWORD`,
+`SHARE64_KEY_ALIAS`, `SHARE64_KEY_PASSWORD`. Without them release APKs use the debug key.
+
 Build one ABI only: `./gradlew :core-cpp:assembleRelease -Pshare64.abis=arm64-v8a`
 Run the engine tests locally:
 `cmake -S core-cpp/src/main/cpp -B build && cmake --build build && ./build/share64_host_test`
