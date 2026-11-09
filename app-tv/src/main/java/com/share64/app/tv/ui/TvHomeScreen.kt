@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,9 +21,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -38,15 +41,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.share64.app.core.AppInfo
 import com.share64.app.core.TransferItem
+import com.share64.app.core.R as CoreR
 import com.share64.app.tv.TvUiState
 import com.share64.app.tv.TvViewModel
 import com.share64.network.DiscoveryStatus
@@ -60,6 +68,7 @@ fun TvHomeScreen(vm: TvViewModel) {
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
     var showManual by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
     val firstItem = remember { FocusRequester() }
 
@@ -109,7 +118,10 @@ fun TvHomeScreen(vm: TvViewModel) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TvButton("Settings", onClick = { showSettings = true })
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    TvButton("About", onClick = { showAbout = true })
+                    TvButton("Settings", onClick = { showSettings = true })
+                }
             }
             StatusLine(state)
 
@@ -225,6 +237,48 @@ fun TvHomeScreen(vm: TvViewModel) {
                     enabled = text.isNotBlank(),
                 )
                 TvButton("Cancel", onClick = { showManual = false })
+            }
+        }
+    }
+
+    if (showAbout) {
+        val build = remember { AppInfo.read(context) }
+        val closeFocus = remember { FocusRequester() }
+        TvDialog(onDismiss = { showAbout = false }) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                Box(
+                    modifier = Modifier.size(112.dp).clip(CircleShape).background(Color(0xFF070607)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Image(
+                        painter = painterResource(CoreR.drawable.logo_mark),
+                        contentDescription = "SHARE64 logo",
+                        modifier = Modifier.padding(22.dp),
+                    )
+                }
+                Column {
+                    Text(AppInfo.APP_NAME, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Version ${build.versionName} · ${build.abiLabel}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Text(AppInfo.TAGLINE, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Developer: ${AppInfo.DEVELOPER_NAME} · github.com/${AppInfo.DEVELOPER_GITHUB}",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                "Source code and releases: ${AppInfo.REPO_URL}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TvButton("Close", onClick = { showAbout = false }, primary = true, modifier = Modifier.focusRequester(closeFocus))
+            LaunchedEffect(Unit) {
+                delay(150)
+                runCatching { closeFocus.requestFocus() }
             }
         }
     }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -42,9 +43,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.share64.app.core.AppInfo
 import com.share64.app.core.PortRules
 import com.share64.app.core.ThemeMode
 import com.share64.app.mobile.MainViewModel
@@ -53,13 +56,14 @@ import com.share64.network.PeerTxt
 /** Full-screen settings, grouped into segmented lists. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
+fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit, onOpenAbout: () -> Unit) {
     val settings by vm.settingsState.collectAsStateWithLifecycle()
     val ui by vm.state.collectAsStateWithLifecycle()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     var editName by remember { mutableStateOf(false) }
     var editPort by remember { mutableStateOf(false) }
     val dynamicSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val appBuild = remember { AppInfo.read(LocalContext.current) }
 
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) vm.setDownloadFolder(uri)
@@ -219,6 +223,18 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
                     subtitle = "Pure black backgrounds in dark theme. Saves battery on OLED screens.",
                     onClick = { vm.setAmoled(!settings.amoled) },
                     trailing = { Switch(checked = settings.amoled, onCheckedChange = null) },
+                )
+            }
+
+            // ---- About --------------------------------------------------------------
+            item { SectionLabel("About") }
+            item {
+                SettingRow(
+                    index = 0, count = 1,
+                    icon = Icons.Default.Info,
+                    title = "About SHARE64",
+                    subtitle = "Version ${appBuild.versionName} · ${appBuild.abiLabel} · developer and links",
+                    onClick = onOpenAbout,
                 )
             }
         }

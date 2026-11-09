@@ -47,12 +47,12 @@ internal class ShareNotifications(private val context: Context) {
     }
 
     private fun action(title: String, pi: PendingIntent): Notification.Action =
-        Notification.Action.Builder(Icon.createWithResource(context, R.drawable.ic_stat_share), title, pi).build()
+        Notification.Action.Builder(Icon.createWithResource(context, R.drawable.ic_stat_logo), title, pi).build()
 
     /** progressPercent null = no running transfer. */
     fun foreground(deviceName: String, text: String, progressPercent: Int?): Notification {
         val b = builder(CH_SERVICE)
-            .setSmallIcon(R.drawable.ic_stat_share)
+            .setSmallIcon(R.drawable.ic_stat_logo)
             .setContentTitle("SHARE64 · $deviceName")
             .setContentText(text)
             .setContentIntent(openApp())
@@ -66,7 +66,7 @@ internal class ShareNotifications(private val context: Context) {
 
     fun offer(transferId: Long, fileName: String, sender: String, sizeText: String): Notification =
         builder(CH_OFFERS)
-            .setSmallIcon(R.drawable.ic_stat_share)
+            .setSmallIcon(R.drawable.ic_stat_logo)
             .setContentTitle("Incoming file from $sender")
             .setContentText("$fileName · $sizeText")
             .setContentIntent(openApp())
@@ -78,7 +78,7 @@ internal class ShareNotifications(private val context: Context) {
 
     fun received(fileName: String, uri: Uri?, mime: String, location: String): Notification {
         val b = builder(CH_DONE)
-            .setSmallIcon(R.drawable.ic_stat_share)
+            .setSmallIcon(R.drawable.ic_stat_logo)
             .setContentTitle("Received $fileName")
             .setAutoCancel(true)
         if (uri != null) {
@@ -95,7 +95,7 @@ internal class ShareNotifications(private val context: Context) {
 
     fun error(title: String, text: String): Notification =
         builder(CH_DONE)
-            .setSmallIcon(R.drawable.ic_stat_share)
+            .setSmallIcon(R.drawable.ic_stat_logo)
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(openApp())
