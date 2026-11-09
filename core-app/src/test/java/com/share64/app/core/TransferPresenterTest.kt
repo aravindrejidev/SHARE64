@@ -82,6 +82,15 @@ class TransferPresenterTest {
         assertEquals("", TransferPresenter.present(snap(state = TransferState.CANCELLED, message = "cancelled"), false, en).detail)
     }
 
+    @Test fun completedReceiveShowsWhereItWasSaved() {
+        val done = TransferPresenter.present(snap(dir = Direction.RECEIVE, state = TransferState.COMPLETED), true, en, savedTo = "Downloads/SHARE64")
+        assertEquals("100 MB · Saved to Downloads/SHARE64", done.detail)
+        val sent = TransferPresenter.present(snap(dir = Direction.SEND, state = TransferState.COMPLETED), false, en, savedTo = "Downloads/SHARE64")
+        assertEquals("100 MB", sent.detail)
+        val unknown = TransferPresenter.present(snap(dir = Direction.RECEIVE, state = TransferState.COMPLETED), false, en)
+        assertEquals("100 MB", unknown.detail)
+    }
+
     @Test fun orderingRunningFirstThenNewestFirst() {
         val list = listOf(
             snap(id = 1, state = TransferState.COMPLETED),

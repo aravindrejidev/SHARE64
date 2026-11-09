@@ -30,7 +30,12 @@ object TransferPresenter {
         return running + finished
     }
 
-    fun present(s: TransferSnapshot, openable: Boolean, locale: Locale = Locale.getDefault()): TransferItem {
+    fun present(
+        s: TransferSnapshot,
+        openable: Boolean,
+        locale: Locale = Locale.getDefault(),
+        savedTo: String? = null,
+    ): TransferItem {
         val send = s.direction == Direction.SEND
         val verb = if (send) "Sending" else "Receiving"
         val size = Formatting.bytes(s.totalBytes, locale)
@@ -66,7 +71,7 @@ object TransferPresenter {
             }
             TransferState.COMPLETED -> {
                 status = if (send) "Sent and verified" else "Received and verified"
-                detail = size
+                detail = if (!send && savedTo != null) "$size · Saved to $savedTo" else size
             }
             TransferState.FAILED -> {
                 status = errorText(s.error, s.message)

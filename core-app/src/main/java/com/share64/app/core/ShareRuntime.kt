@@ -20,14 +20,20 @@ object ShareRuntime {
     val uiVisible: StateFlow<Boolean> = _uiVisible.asStateFlow()
 
     private val _received = MutableStateFlow<Map<Long, Uri>>(emptyMap())
-    /** Transfer id -> content Uri of the finished file in the public Downloads folder. */
+    /** Transfer id -> content Uri of the finished file (only when it was exported to public storage). */
     val receivedUris: StateFlow<Map<Long, Uri>> = _received.asStateFlow()
+
+    private val _locations = MutableStateFlow<Map<Long, String>>(emptyMap())
+    /** Transfer id -> where the finished file was saved, e.g. "Downloads/SHARE64". */
+    val receivedLocations: StateFlow<Map<Long, String>> = _locations.asStateFlow()
 
     internal fun setNode(node: Share64Node?) { _node.value = node }
 
     fun setUiVisible(visible: Boolean) { _uiVisible.value = visible }
 
-    internal fun markReceived(transferId: Long, uri: Uri) {
-        _received.update { it + (transferId to uri) }
+    /** [uri] is null when the file stayed in app storage. */
+    internal fun markReceived(transferId: Long, uri: Uri?, location: String) {
+        if (uri != null) _received.update { it + (transferId to uri) }
+        _locations.update { it + (transferId to location) }
     }
 }

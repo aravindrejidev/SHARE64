@@ -1,15 +1,19 @@
 package com.share64.app.mobile
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.share64.app.core.AppSettings
+import com.share64.app.core.DownloadLocations
 import com.share64.app.core.Formatting
 import com.share64.app.core.OutgoingFile
 import com.share64.app.core.OutgoingFiles
+import com.share64.app.core.PortRules
 import com.share64.app.core.ShareRuntime
 import com.share64.app.core.ShareService
+import com.share64.app.core.ThemeMode
 import com.share64.app.core.TransferItem
 import com.share64.app.core.TransferPresenter
 import com.share64.core.TransferSnapshot
@@ -46,7 +50,19 @@ data class MainUiState(
     val pendingFiles: List<OutgoingFile> = emptyList(),
 )
 
-data class SettingsState(val deviceName: String, val receiveInBackground: Boolean, val autoAccept: Boolean)
+data class SettingsState(
+    val deviceName: String,
+    val receiveInBackground: Boolean,
+    val autoAccept: Boolean,
+    /** Port the receiver tries first; the active one is [MainUiState.port]. */
+    val port: Int,
+    /** Human-readable download folder, e.g. "Downloads/SHARE64". */
+    val downloadLabel: String,
+    val customDownloadFolder: Boolean,
+    val themeMode: ThemeMode,
+    val dynamicColor: Boolean,
+    val amoled: Boolean,
+)
 
 private data class NodeSnapshot(
     val ready: Boolean = false,
@@ -86,7 +102,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    val state: StateFlow<MainUiState> = combine(nodeState, pending, ShareRuntime.receivedUris) { node, files, received ->
+    val state: StateFlow<MainUiState> = combine(
+        nodeState,
+        pending,
+        ShareRuntime.receivedUris,
+        ShareRuntime.receivedLocations,
+    ) { node, files, received, locations ->
         val ordered = TransferPresenter.order(node.transfers.values)
         val offer = ordered.firstOrNull { it.state == TransferState.OFFERED }
         MainUiState(
@@ -96,7 +117,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             addresses = node.addresses,
             port = node.port,
             peers = node.peers,
-            transfers = ordered.map { TransferPresenter.present(it, received.containsKey(it.id)) },
+            transfers = ordered.map {
+                TransferPresenter.present(it, received.containsKey(it.id), savedTo = locations[it.id])
+            },
             offer = offer?.let { IncomingOffer(it.id, it.name, it.peerName ?: "another device", Formatting.bytes(it.totalBytes)) },
             pendingFiles = files,
         )
@@ -183,6 +206,45 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         ShareService.restart(appContext) // the advertised name is fixed per engine instance
     }
 
+    fun setPort(port: Int) {
+        if (port !in PortRules.MIN..PortRules.MAX || port == settings.port) return
+        settings.port = port
+        _settings.value = readSettings()
+        ShareService.restart(appContext) // re-binds the listener
+        postMessage("Port set to $port")
+    }
+
+    /** Pass null to go back to Downloads/SHARE64. */
+    fun setDownloadFolder(tree: Uri?) {
+        val old = settings.downloadTreeUri
+        if (tree != null) {
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            try {
+                appContext.contentResolver.takePersistableUriPermission(tree, flags)
+            } catch (_: SecurityException) {
+                postMessage("Couldn't get permission for that folder")
+                return
+            }
+            if (!DownloadLocations.isUsable(appContext, tree)) {
+                postMessage("That folder can't be written to. Pick a different one.")
+                return
+            }
+            settings.downloadTreeUri = tree.toString()
+        } else {
+            settings.downloadTreeUri = null
+        }
+        if (old != null && old != tree?.toString()) {
+            runCatching {
+                appContext.contentResolver.releasePersistableUriPermission(
+                    Uri.parse(old),
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+        }
+        _settings.value = readSettings()
+        postMessage("Files will be saved to ${_settings.value.downloadLabel}")
+    }
+
     fun setReceiveInBackground(enabled: Boolean) {
         settings.receiveInBackground = enabled
         _settings.value = readSettings()
@@ -194,5 +256,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         ShareService.restart(appContext)
     }
 
-    private fun readSettings() = SettingsState(identity.displayName, settings.receiveInBackground, settings.autoAccept)
+    fun setThemeMode(mode: ThemeMode) {
+        settings.themeMode = mode
+        _settings.value = readSettings()
+    }
+
+    fun setDynamicColor(enabled: Boolean) {
+        settings.dynamicColor = enabled
+        _settings.value = readSettings()
+    }
+
+    fun setAmoled(enabled: Boolean) {
+        settings.amoled = enabled
+        _settings.value = readSettings()
+    }
+
+    private fun readSettings(): SettingsState {
+        val tree = settings.downloadTreeUri
+        return SettingsState(
+            deviceName = identity.displayName,
+            receiveInBackground = settings.receiveInBackground,
+            autoAccept = settings.autoAccept,
+            port = settings.port,
+            downloadLabel = DownloadLocations.label(tree),
+            customDownloadFolder = tree != null,
+            themeMode = settings.themeMode,
+            dynamicColor = settings.dynamicColor,
+            amoled = settings.amoled,
+        )
+    }
 }

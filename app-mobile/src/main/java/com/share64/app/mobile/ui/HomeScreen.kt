@@ -7,38 +7,49 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.share64.app.mobile.MainViewModel
@@ -46,13 +57,13 @@ import com.share64.network.DiscoveryStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(vm: MainViewModel) {
+fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
-    val settings by vm.settingsState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
-    var showSettings by remember { mutableStateOf(false) }
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     var showManual by remember { mutableStateOf(false) }
+    var fabExpanded by remember { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         vm.onFilesPicked(uris)
@@ -69,89 +80,101 @@ fun HomeScreen(vm: MainViewModel) {
     LaunchedEffect(Unit) {
         vm.messages.collect { snackbar.showSnackbar(it) }
     }
+    BackHandler(enabled = fabExpanded) { fabExpanded = false }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("SHARE64", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                        if (state.deviceName.isNotEmpty()) {
-                            Text(
-                                "Visible as ${state.deviceName}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+            topBar = {
+                LargeTopAppBar(
+                    title = { Text("SHARE64") },
+                    actions = {
+                        FilledTonalIconButton(onClick = onOpenSettings) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings")
                         }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
-                    }
-                },
-            )
-        },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = {
-                    vm.chooseTarget(null)
-                    picker.launch(arrayOf("*/*"))
-                },
-                icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("Send files") },
-            )
-        },
-        snackbarHost = { SnackbarHost(snackbar) },
-    ) { padding ->
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 160.dp),
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                start = 16.dp,
-                end = 16.dp,
-                top = padding.calculateTopPadding() + 8.dp,
-                bottom = padding.calculateBottomPadding() + 96.dp,
-            ),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item(key = "status", span = { GridItemSpan(maxLineSpan) }) { StatusBanner(state) }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        scrolledContainerColor = MaterialTheme.colorScheme.surface,
+                    ),
+                    scrollBehavior = scrollBehavior,
+                )
+            },
+            snackbarHost = { SnackbarHost(snackbar, modifier = Modifier.padding(end = 72.dp)) },
+        ) { padding ->
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 160.dp),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = padding.calculateTopPadding() + 8.dp,
+                    bottom = padding.calculateBottomPadding() + 120.dp,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item(key = "status", span = { GridItemSpan(maxLineSpan) }) { StatusBanner(state) }
 
-            item(key = "devices-title", span = { GridItemSpan(maxLineSpan) }) {
-                SectionHeader("Nearby devices", actionLabel = "Add by address", onAction = { showManual = true })
-            }
-            if (state.peers.isEmpty()) {
-                item(key = "devices-empty", span = { GridItemSpan(maxLineSpan) }) {
-                    EmptyDevices(searching = state.status is DiscoveryStatus.Running)
+                item(key = "devices-title", span = { GridItemSpan(maxLineSpan) }) {
+                    SectionHeader("Nearby devices", actionLabel = "Add by address", onAction = { showManual = true })
                 }
-            } else {
-                items(state.peers, key = { it.id }) { peer ->
-                    DeviceCard(
-                        peer = peer,
-                        onClick = {
-                            vm.chooseTarget(peer)
-                            picker.launch(arrayOf("*/*"))
-                        },
-                    )
+                if (state.peers.isEmpty()) {
+                    item(key = "devices-empty", span = { GridItemSpan(maxLineSpan) }) {
+                        EmptyDevices(searching = state.status is DiscoveryStatus.Running)
+                    }
+                } else {
+                    items(state.peers, key = { it.id }) { peer ->
+                        DeviceCard(
+                            peer = peer,
+                            onClick = {
+                                vm.chooseTarget(peer)
+                                picker.launch(arrayOf("*/*"))
+                            },
+                        )
+                    }
                 }
-            }
 
-            if (state.transfers.isNotEmpty()) {
-                item(key = "transfers-title", span = { GridItemSpan(maxLineSpan) }) { SectionHeader("Transfers") }
-                items(state.transfers, key = { it.id }, span = { GridItemSpan(maxLineSpan) }) { t ->
-                    TransferCard(
-                        item = t,
-                        onCancel = { vm.cancel(t.id) },
-                        onDismiss = { vm.dismiss(t.id) },
-                        onOpen = {
-                            val uri = vm.receivedUri(t.id)
-                            if (uri == null || !openFile(context, uri)) vm.postMessage("No app can open this file")
-                        },
-                    )
+                if (state.transfers.isNotEmpty()) {
+                    item(key = "transfers-title", span = { GridItemSpan(maxLineSpan) }) { SectionHeader("Transfers") }
+                    items(state.transfers, key = { it.id }, span = { GridItemSpan(maxLineSpan) }) { t ->
+                        TransferCard(
+                            item = t,
+                            onCancel = { vm.cancel(t.id) },
+                            onDismiss = { vm.dismiss(t.id) },
+                            onOpen = {
+                                val uri = vm.receivedUri(t.id)
+                                if (uri == null || !openFile(context, uri)) vm.postMessage("No app can open this file")
+                            },
+                        )
+                    }
                 }
             }
         }
+
+        AnimatedVisibility(visible = fabExpanded, enter = fadeIn(), exit = fadeOut()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                        fabExpanded = false
+                    },
+            )
+        }
+
+        ExpressiveFabMenu(
+            expanded = fabExpanded,
+            onExpandedChange = { fabExpanded = it },
+            actions = listOf(
+                FabAction("Send files", Icons.AutoMirrored.Filled.Send) {
+                    vm.chooseTarget(null)
+                    picker.launch(arrayOf("*/*"))
+                },
+                FabAction("Add by address", Icons.Default.Search) { showManual = true },
+            ),
+            modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp),
+        )
     }
 
     if (state.pendingFiles.isNotEmpty()) {
@@ -161,18 +184,6 @@ fun HomeScreen(vm: MainViewModel) {
             onPick = { vm.sendPendingTo(it) },
             onManual = { showManual = true },
             onDismiss = { vm.clearPending() },
-        )
-    }
-
-    if (showSettings) {
-        SettingsSheet(
-            settings = settings,
-            addresses = state.addresses,
-            port = state.port,
-            onName = { vm.setDeviceName(it) },
-            onBackground = { vm.setReceiveInBackground(it) },
-            onAutoAccept = { vm.setAutoAccept(it) },
-            onDismiss = { showSettings = false },
         )
     }
 

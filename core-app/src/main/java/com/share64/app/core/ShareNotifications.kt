@@ -76,7 +76,7 @@ internal class ShareNotifications(private val context: Context) {
             .addAction(action("Decline", serviceAction(ShareService.ACTION_DECLINE, transferId, notificationId(transferId, 2))))
             .build()
 
-    fun received(fileName: String, uri: Uri?, mime: String, savedPath: String?): Notification {
+    fun received(fileName: String, uri: Uri?, mime: String, location: String): Notification {
         val b = builder(CH_DONE)
             .setSmallIcon(R.drawable.ic_stat_share)
             .setContentTitle("Received $fileName")
@@ -84,10 +84,10 @@ internal class ShareNotifications(private val context: Context) {
         if (uri != null) {
             val view = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-            b.setContentText("Saved in Downloads/SHARE64 · tap to open")
+            b.setContentText("Saved to $location · tap to open")
             b.setContentIntent(PendingIntent.getActivity(context, 0, view, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
         } else {
-            b.setContentText(savedPath?.let { "Saved in app storage" } ?: "Saved")
+            b.setContentText("Saved to $location")
             b.setContentIntent(openApp())
         }
         return b.build()

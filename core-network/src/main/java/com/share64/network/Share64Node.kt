@@ -28,6 +28,8 @@ class Share64Node(
     context: Context,
     private val saveDir: File,
     autoAccept: Boolean = false,
+    /** Port to listen on first; if it is busy any free port is used and advertised instead. */
+    private val preferredPort: Int = TransferEngine.DEFAULT_PORT,
     val identity: DeviceIdentity = DeviceIdentity(context),
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -48,9 +50,9 @@ class Share64Node(
     fun start(): Int {
         check(!closed.get()) { "Share64Node is closed" }
         val port = try {
-            engine.startReceiver(saveDir, TransferEngine.DEFAULT_PORT)
+            engine.startReceiver(saveDir, preferredPort)
         } catch (_: IOException) {
-            engine.startReceiver(saveDir, 0) // default port busy: any free port, advertised via DNS-SD
+            engine.startReceiver(saveDir, 0) // preferred port busy: any free port, advertised via DNS-SD
         }
         discovery.start(port)
         return port

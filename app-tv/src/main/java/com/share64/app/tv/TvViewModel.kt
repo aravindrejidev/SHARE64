@@ -89,9 +89,9 @@ class TvViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    val state: StateFlow<TvUiState> = combine(nodeState, ShareRuntime.receivedUris) { node, received ->
+    val state: StateFlow<TvUiState> = combine(nodeState, ShareRuntime.receivedUris, ShareRuntime.receivedLocations) { node, received, locations ->
         val ordered = TransferPresenter.order(node.transfers.values)
-        val items = ordered.map { TransferPresenter.present(it, received.containsKey(it.id)) }
+        val items = ordered.map { TransferPresenter.present(it, received.containsKey(it.id), savedTo = locations[it.id]) }
         val offer = ordered.firstOrNull { it.state == TransferState.OFFERED }
         TvUiState(
             ready = node.ready,

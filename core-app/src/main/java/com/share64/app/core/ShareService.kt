@@ -86,7 +86,7 @@ class ShareService : Service() {
         scope.launch(Dispatchers.IO) {
             try {
                 val dir = getExternalFilesDir("Received") ?: File(filesDir, "Received")
-                val n = Share64Node(applicationContext, dir, autoAccept = settings.autoAccept)
+                val n = Share64Node(applicationContext, dir, autoAccept = settings.autoAccept, preferredPort = settings.port)
                 try {
                     n.start()
                 } catch (e: Exception) {
@@ -183,11 +183,14 @@ class ShareService : Service() {
     private fun exportReceived(s: TransferSnapshot) {
         scope.launch(Dispatchers.IO) {
             val path = s.savedPath ?: return@launch
-            val uri = FileExporter.export(applicationContext, File(path), s.name)
-            if (uri != null) ShareRuntime.markReceived(s.id, uri)
+            val result = FileExporter.export(applicationContext, File(path), s.name, settings.downloadTreeUri)
+            // If exporting is impossible (Android 9-, folder permission lost, storage full) the file
+            // simply stays in app storage and we say so.
+            val location = result?.location ?: "app storage (Android/data/$packageName/files/Received)"
+            ShareRuntime.markReceived(s.id, result?.uri, location)
             notifier.notify(
                 ShareNotifications.doneId(s.id),
-                notifier.received(s.name, uri, FileExporter.mimeFor(s.name), path),
+                notifier.received(s.name, result?.uri, FileExporter.mimeFor(s.name), location),
             )
         }
     }
