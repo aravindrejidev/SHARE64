@@ -63,7 +63,8 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit, onOpenAbout: () -> Uni
     var editName by remember { mutableStateOf(false) }
     var editPort by remember { mutableStateOf(false) }
     val dynamicSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-    val appBuild = remember { AppInfo.read(LocalContext.current) }
+    val context = LocalContext.current
+    val appBuild = remember { AppInfo.read(context) }
 
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) vm.setDownloadFolder(uri)
