@@ -47,7 +47,12 @@ data class TvUiState(
     val offer: TvOffer? = null,
 )
 
-data class TvSettings(val deviceName: String, val receiveInBackground: Boolean, val autoAccept: Boolean)
+data class TvSettings(
+    val deviceName: String,
+    val receiveInBackground: Boolean,
+    val autoAccept: Boolean,
+    val autoUpdateCheck: Boolean,
+)
 
 private data class NodeSnapshot(
     val ready: Boolean = false,
@@ -177,11 +182,17 @@ class TvViewModel(app: Application) : AndroidViewModel(app) {
         _settings.value = readSettings()
     }
 
+    fun setAutoUpdateCheck(enabled: Boolean) {
+        settings.autoUpdateCheck = enabled
+        _settings.value = readSettings()
+    }
+
     fun setAutoAccept(enabled: Boolean) {
         settings.autoAccept = enabled
         _settings.value = readSettings()
         ShareService.restart(appContext)
     }
 
-    private fun readSettings() = TvSettings(identity.displayName, settings.receiveInBackground, settings.autoAccept)
+    private fun readSettings() =
+        TvSettings(identity.displayName, settings.receiveInBackground, settings.autoAccept, settings.autoUpdateCheck)
 }

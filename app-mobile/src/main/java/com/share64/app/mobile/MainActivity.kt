@@ -14,8 +14,10 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.share64.app.core.AppFlavor
 import com.share64.app.core.ShareRuntime
 import com.share64.app.core.ShareService
+import com.share64.app.core.UpdateManager
 import com.share64.app.mobile.ui.Share64App
 import com.share64.app.mobile.ui.Share64Theme
 import com.share64.app.mobile.ui.resolveDark
@@ -25,6 +27,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        UpdateManager.init(applicationContext, AppFlavor.PHONE)
         if (savedInstanceState == null) handleShareIntent(intent)
         setContent {
             val settings by vm.settingsState.collectAsStateWithLifecycle()
@@ -60,6 +63,8 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         ShareRuntime.setUiVisible(true)
         ShareService.start(this) // Android 12+: allowed because the Activity is visible
+        UpdateManager.checkOnLaunch()
+        UpdateManager.onForeground() // continues an update after the person allowed installs in Settings
     }
 
     override fun onStop() {

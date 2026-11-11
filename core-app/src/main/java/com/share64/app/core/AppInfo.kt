@@ -18,6 +18,12 @@ object AppInfo {
     const val REPO_URL = "$DEVELOPER_URL/$REPO_NAME"
     const val RELEASES_URL = "$REPO_URL/releases"
     const val ISSUES_URL = "$REPO_URL/issues"
+    const val LATEST_RELEASE_API_URL = "https://api.github.com/repos/$DEVELOPER_GITHUB/$REPO_NAME/releases/latest"
+    const val RAW_BASE_URL = "https://raw.githubusercontent.com/$DEVELOPER_GITHUB/$REPO_NAME"
+
+    /** Release notes shown by the updater: this file in the repo root (both spellings are accepted). */
+    val RELEASE_NOTICE_FILES = listOf("Relece_notice.md", "Release_notice.md")
+
     const val CONTRIBUTORS_API_URL = "https://api.github.com/repos/$DEVELOPER_GITHUB/$REPO_NAME/contributors?per_page=30"
 
     data class BuildInfo(val versionName: String, val versionCode: Long, val abiLabel: String)

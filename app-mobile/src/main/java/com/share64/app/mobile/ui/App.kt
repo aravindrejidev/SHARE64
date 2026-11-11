@@ -12,8 +12,14 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.share64.app.core.AppInfo
+import com.share64.app.core.UpdateManager
+import com.share64.app.core.isActionable
 import com.share64.app.mobile.MainViewModel
 
 private enum class Screen { Home, Settings, About }
@@ -21,6 +27,7 @@ private enum class Screen { Home, Settings, About }
 /** Home -> Settings -> About, with a slide in the direction of travel; system Back goes one level up. */
 @Composable
 fun Share64App(vm: MainViewModel) {
+    val context = LocalContext.current
     var level by rememberSaveable { mutableStateOf(0) }
     val screen = Screen.entries[level.coerceIn(0, Screen.entries.size - 1)]
     BackHandler(enabled = level > 0) { level -= 1 }
@@ -42,5 +49,17 @@ fun Share64App(vm: MainViewModel) {
             Screen.Settings -> SettingsScreen(vm = vm, onBack = { level = 0 }, onOpenAbout = { level = 2 })
             Screen.About -> AboutScreen(onBack = { level = 1 })
         }
+    }
+
+    // In-app updater: opens by itself when a new release is found at launch.
+    val updateState by UpdateManager.state.collectAsStateWithLifecycle()
+    val updateSheetVisible by UpdateManager.sheetVisible.collectAsStateWithLifecycle()
+    val installedVersion = remember { AppInfo.read(context).versionName }
+    if (updateSheetVisible && updateState.isActionable) {
+        UpdateSheet(
+            state = updateState,
+            currentVersion = installedVersion,
+            onDismiss = { UpdateManager.dismissSheet() },
+        )
     }
 }

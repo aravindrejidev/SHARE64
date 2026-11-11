@@ -53,6 +53,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.share64.app.core.AppInfo
+import com.share64.app.core.UpdateManager
+import com.share64.app.core.UpdateState
+import com.share64.app.core.UpdateText
+import com.share64.app.core.isActionable
 import com.share64.app.core.TransferItem
 import com.share64.app.core.R as CoreR
 import com.share64.app.tv.TvUiState
@@ -69,6 +73,9 @@ fun TvHomeScreen(vm: TvViewModel) {
     var showSettings by remember { mutableStateOf(false) }
     var showManual by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
+    val updateState by UpdateManager.state.collectAsStateWithLifecycle()
+    val updateSheetVisible by UpdateManager.sheetVisible.collectAsStateWithLifecycle()
+    val installedVersion = remember { AppInfo.read(context).versionName }
     var toast by remember { mutableStateOf<String?>(null) }
     val firstItem = remember { FocusRequester() }
 
@@ -241,6 +248,14 @@ fun TvHomeScreen(vm: TvViewModel) {
         }
     }
 
+    if (updateSheetVisible && updateState.isActionable) {
+        TvUpdateDialog(
+            state = updateState,
+            currentVersion = installedVersion,
+            onDismiss = { UpdateManager.dismissSheet() },
+        )
+    }
+
     if (showAbout) {
         val build = remember { AppInfo.read(context) }
         val closeFocus = remember { FocusRequester() }
@@ -310,6 +325,20 @@ fun TvHomeScreen(vm: TvViewModel) {
                 subtitle = "Stay visible to other devices while SHARE64 is closed.",
                 checked = settings.receiveInBackground,
                 onChange = { vm.setReceiveInBackground(it) },
+            )
+            TvToggleRow(
+                title = "Check for updates when the app opens",
+                subtitle = UpdateText.settingsStatus(updateState, UpdateManager.lastCheckMs, System.currentTimeMillis()),
+                checked = settings.autoUpdateCheck,
+                onChange = { vm.setAutoUpdateCheck(it) },
+            )
+            TvButton(
+                if (updateState.isActionable) "Update available \u2014 show" else "Check for updates now",
+                onClick = {
+                    if (updateState.isActionable) UpdateManager.showSheet() else UpdateManager.checkNow()
+                    showSettings = false
+                },
+                enabled = updateState != UpdateState.Checking,
             )
             TvToggleRow(
                 title = "Accept files automatically",

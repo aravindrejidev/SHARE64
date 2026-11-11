@@ -49,6 +49,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.share64.app.core.AppInfo
 import com.share64.app.core.PortRules
+import com.share64.app.core.UpdateManager
+import com.share64.app.core.UpdateState
+import com.share64.app.core.UpdateText
+import com.share64.app.core.isActionable
 import com.share64.app.core.ThemeMode
 import com.share64.app.mobile.MainViewModel
 import com.share64.network.PeerTxt
@@ -59,6 +63,7 @@ import com.share64.network.PeerTxt
 fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit, onOpenAbout: () -> Unit) {
     val settings by vm.settingsState.collectAsStateWithLifecycle()
     val ui by vm.state.collectAsStateWithLifecycle()
+    val updateState by UpdateManager.state.collectAsStateWithLifecycle()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     var editName by remember { mutableStateOf(false) }
     var editPort by remember { mutableStateOf(false) }
@@ -224,6 +229,32 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit, onOpenAbout: () -> Uni
                     subtitle = "Pure black backgrounds in dark theme. Saves battery on OLED screens.",
                     onClick = { vm.setAmoled(!settings.amoled) },
                     trailing = { Switch(checked = settings.amoled, onCheckedChange = null) },
+                )
+            }
+
+            // ---- Updates ------------------------------------------------------------
+            item { SectionLabel("Updates") }
+            item {
+                SettingRow(
+                    index = 0, count = 2,
+                    icon = ShareIcons.Download,
+                    title = "Check for updates",
+                    subtitle = UpdateText.settingsStatus(updateState, UpdateManager.lastCheckMs, System.currentTimeMillis()),
+                    enabled = updateState != UpdateState.Checking,
+                    onClick = { if (updateState.isActionable) UpdateManager.showSheet() else UpdateManager.checkNow() },
+                    trailing = {
+                        if (updateState == UpdateState.Checking) ExpressiveLoading(indicatorSize = 28.dp)
+                    },
+                )
+            }
+            item {
+                SettingRow(
+                    index = 1, count = 2,
+                    icon = Icons.Default.Refresh,
+                    title = "Check when the app opens",
+                    subtitle = "Looks for a new release on GitHub, at most every few hours",
+                    onClick = { vm.setAutoUpdateCheck(!settings.autoUpdateCheck) },
+                    trailing = { Switch(checked = settings.autoUpdateCheck, onCheckedChange = null) },
                 )
             }
 

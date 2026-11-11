@@ -27,6 +27,9 @@ object ShareIcons {
         icon("Lan", "M13,22h8v-7h-3v-4h-5V9h3V2H8v7h3v2H6v4H3v7h8v-7H8v-2h8v2h-3z")
     }
 
+    val Download: ImageVector by lazy {
+        icon("Download", "M19,9h-4V3H9v6H5l7,7 7,-7zM5,18v2h14v-2H5z")
+    }
     val Code: ImageVector by lazy {
         icon(
             "Code",

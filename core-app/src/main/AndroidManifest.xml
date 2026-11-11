@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- In-app updates: lets the person allow this app to install its own new versions. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Any one of these satisfies the "connectedDevice" foreground-service prerequisite on Android 14+. -->
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
@@ -15,6 +17,10 @@
             android:name="com.share64.app.core.ShareService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <receiver
+            android:name="com.share64.app.core.UpdateInstallReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>
