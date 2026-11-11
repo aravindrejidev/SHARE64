@@ -42,7 +42,24 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_AMOLED, false)
         set(value) { prefs.edit().putBoolean(KEY_AMOLED, value).apply() }
 
+    /** Look for a new release whenever the app opens (at most every few hours). */
+    var autoUpdateCheck: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_UPDATE, true)
+        set(value) { prefs.edit().putBoolean(KEY_AUTO_UPDATE, value).apply() }
+
+    var lastUpdateCheckMs: Long
+        get() = prefs.getLong(KEY_LAST_CHECK, 0L)
+        set(value) { prefs.edit().putLong(KEY_LAST_CHECK, value).apply() }
+
+    /** A version the person chose "Skip this version" for; automatic checks stay quiet about it. */
+    var skippedVersion: String?
+        get() = prefs.getString(KEY_SKIPPED, null)
+        set(value) { prefs.edit().apply { if (value == null) remove(KEY_SKIPPED) else putString(KEY_SKIPPED, value) }.apply() }
+
     private companion object {
+        const val KEY_AUTO_UPDATE = "auto_update_check"
+        const val KEY_LAST_CHECK = "last_update_check"
+        const val KEY_SKIPPED = "skipped_version"
         const val KEY_BACKGROUND = "receive_in_background"
         const val KEY_AUTO_ACCEPT = "auto_accept"
         const val KEY_PORT = "port"
