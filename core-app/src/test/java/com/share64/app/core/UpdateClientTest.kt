@@ -1,7 +1,5 @@
 package com.share64.app.core
 
-import com.sun.net.httpserver.HttpExchange
-import com.sun.net.httpserver.HttpServer
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -11,41 +9,87 @@ import org.junit.Before
 import org.junit.Test
 import java.io.File
 import java.io.IOException
-import java.net.InetSocketAddress
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 
-/** Exercises the real HTTP code against a local server that mimics GitHub's layout. */
+/**
+ * Exercises the real HTTP code against a tiny local server that mimics GitHub's layout.
+ * (Plain java.net sockets: the JDK-internal com.sun HttpServer is not visible to Android unit tests.)
+ */
 class UpdateClientTest {
-    private lateinit var server: HttpServer
+
+    private class Response(val code: Int, val body: ByteArray = ByteArray(0), val headers: Map<String, String> = emptyMap())
+
+    private class TinyHttpServer(private val handler: (path: String) -> Response) : AutoCloseable {
+        private val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        private val running = AtomicBoolean(true)
+        val port: Int get() = server.localPort
+
+        init {
+            thread(isDaemon = true) {
+                while (running.get()) {
+                    val socket = try { server.accept() } catch (_: IOException) { break }
+                    thread(isDaemon = true) { serve(socket) }
+                }
+            }
+        }
+
+        private fun serve(socket: Socket) {
+            try {
+                socket.use { s ->
+                    val reader = s.getInputStream().bufferedReader(Charsets.ISO_8859_1)
+                    val requestLine = reader.readLine() ?: return
+                    while (true) { // skip the request headers
+                        val line = reader.readLine() ?: break
+                        if (line.isEmpty()) break
+                    }
+                    val path = requestLine.split(' ').getOrNull(1)?.substringBefore('?') ?: "/"
+                    val r = handler(path)
+                    val reason = when (r.code) { 200 -> "OK"; 302 -> "Found"; 403 -> "Forbidden"; 404 -> "Not Found"; else -> "Status" }
+                    val head = StringBuilder("HTTP/1.1 ${r.code} $reason\r\nContent-Length: ${r.body.size}\r\nConnection: close\r\n")
+                    r.headers.forEach { (k, v) -> head.append("$k: $v\r\n") }
+                    head.append("\r\n")
+                    val out = s.getOutputStream()
+                    out.write(head.toString().toByteArray(Charsets.ISO_8859_1))
+                    out.write(r.body)
+                    out.flush()
+                }
+            } catch (_: IOException) {
+                // the client hung up (e.g. a cancelled download)
+            }
+        }
+
+        override fun close() {
+            running.set(false)
+            server.close()
+        }
+    }
+
+    private lateinit var server: TinyHttpServer
     private lateinit var base: String
+    private lateinit var tmp: File
     private val routes = HashMap<String, Pair<Int, ByteArray>>()
     private val apk = ByteArray(300_000) { (it * 31 % 251).toByte() }
-    private lateinit var tmp: File
-
-    private fun reply(ex: HttpExchange, code: Int, body: ByteArray, headers: Map<String, String> = emptyMap()) {
-        headers.forEach { (k, v) -> ex.responseHeaders.add(k, v) }
-        if (body.isEmpty()) ex.sendResponseHeaders(code, -1) else ex.sendResponseHeaders(code, body.size.toLong())
-        if (body.isNotEmpty()) ex.responseBody.use { it.write(body) } else ex.close()
-    }
 
     @Before fun start() {
         tmp = File.createTempFile("upd", "dir").also { it.delete(); it.mkdirs() }
-        server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        server.createContext("/") { ex ->
-            val path = ex.requestURI.path
+        server = TinyHttpServer { path ->
             when {
-                path == "/redirect/apk" -> reply(ex, 302, ByteArray(0), mapOf("Location" to "/dl/app.apk"))
-                path == "/dl/app.apk" -> reply(ex, 200, apk)
-                routes.containsKey(path) -> routes.getValue(path).let { reply(ex, it.first, it.second) }
-                else -> reply(ex, 404, "nope".toByteArray())
+                path == "/redirect/apk" -> Response(302, headers = mapOf("Location" to "/dl/app.apk"))
+                path == "/dl/app.apk" -> Response(200, apk)
+                routes.containsKey(path) -> routes.getValue(path).let { Response(it.first, it.second) }
+                else -> Response(404, "nope".toByteArray())
             }
         }
-        server.start()
-        base = "http://127.0.0.1:${server.address.port}"
+        base = "http://127.0.0.1:${server.port}"
     }
 
     @After fun stop() {
-        server.stop(0)
+        server.close()
         tmp.deleteRecursively()
     }
 
@@ -82,7 +126,7 @@ class UpdateClientTest {
         assertEquals("corrected spelling", client().fetchNotes("v1.2.0"))
 
         routes.clear()
-        routes["/raw/v1.2.0/Relece_notice.md"] = 200 to "   \n".toByteArray() // empty file is skipped
+        routes["/raw/v1.2.0/Relece_notice.md"] = 200 to "   \n".toByteArray() // an empty file is skipped
         routes["/raw/main/Relece_notice.md"] = 200 to "fallback".toByteArray()
         assertEquals("fallback", client().fetchNotes("v1.2.0"))
 
