@@ -62,6 +62,8 @@ data class SettingsState(
     val themeMode: ThemeMode,
     val dynamicColor: Boolean,
     val amoled: Boolean,
+    /** Look for a new release whenever the app opens. */
+    val autoUpdateCheck: Boolean,
 )
 
 private data class NodeSnapshot(
@@ -271,6 +273,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _settings.value = readSettings()
     }
 
+    fun setAutoUpdateCheck(enabled: Boolean) {
+        settings.autoUpdateCheck = enabled
+        _settings.value = readSettings()
+    }
+
     private fun readSettings(): SettingsState {
         val tree = settings.downloadTreeUri
         return SettingsState(
@@ -283,6 +290,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             themeMode = settings.themeMode,
             dynamicColor = settings.dynamicColor,
             amoled = settings.amoled,
+            autoUpdateCheck = settings.autoUpdateCheck,
         )
     }
 }
