@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -93,7 +92,7 @@ fun TvUpdateDialog(state: UpdateState, currentVersion: String, onDismiss: () -> 
         when (state) {
             is UpdateState.Downloading -> {
                 val fraction = if (state.total > 0) (state.downloaded.toFloat() / state.total).coerceIn(0f, 1f) else 0f
-                LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().height(10.dp))
+                TvWavyProgress(progress = fraction)
                 Text(
                     "${Formatting.bytes(state.downloaded)} of ${Formatting.bytes(state.total)}",
                     style = MaterialTheme.typography.bodyMedium,

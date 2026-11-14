@@ -1,6 +1,10 @@
 package com.share64.app.tv.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,14 +16,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -29,10 +39,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -41,27 +52,57 @@ import com.share64.core.TransferState
 import com.share64.network.DeviceType
 import com.share64.network.PeerDevice
 
+fun deviceIcon(type: DeviceType): ImageVector = when (type) {
+    DeviceType.PHONE -> TvIcons.Phone
+    DeviceType.TV -> TvIcons.Tv
+    DeviceType.OTHER -> TvIcons.Devices
+}
+
 /**
- * Basic D-pad building block: focusable (and OK/Enter-clickable), scales up and gets a thick ring
- * when focused so it is readable from across the room.
+ * The D-pad building block. Focusable (and OK/Enter-clickable). When focused it springs up in
+ * size, its corners tighten, its colour flips to the focus colour and a ring appears, so the
+ * selection is unmistakable from across the room.
  */
 @Composable
 fun FocusBox(
     onClick: () -> Unit,
+    restColor: Color,
+    focusColor: Color,
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(16.dp),
+    restRadius: Dp = 32.dp,
+    focusRadius: Dp = 18.dp,
+    focusScale: Float = 1.06f,
     enabled: Boolean = true,
     content: @Composable (focused: Boolean) -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val scale by animateFloatAsState(if (focused) 1.05f else 1f, label = "focusScale")
-    val ring = MaterialTheme.colorScheme.primary
+    val scale by animateFloatAsState(
+        targetValue = if (focused) focusScale else 1f,
+        animationSpec = expressiveSpring(0.55f, Spring.StiffnessMediumLow),
+        label = "focusScale",
+    )
+    val radius by animateDpAsState(
+        targetValue = if (focused) focusRadius else restRadius,
+        animationSpec = expressiveSpring(0.6f, Spring.StiffnessMedium),
+        label = "focusRadius",
+    )
+    val color by animateColorAsState(
+        targetValue = if (focused) focusColor else restColor,
+        animationSpec = tween(180),
+        label = "focusColor",
+    )
+    val shape = RoundedCornerShape(if (radius < 0.dp) 0.dp else radius)
+    val ring = MaterialTheme.colorScheme.onBackground
     Box(
         modifier = modifier
-            .scale(scale)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .then(if (focused) Modifier.border(3.dp, ring, shape) else Modifier)
             .clip(shape)
+            .background(color)
             .clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick),
     ) {
         content(focused)
@@ -75,111 +116,166 @@ fun TvButton(
     modifier: Modifier = Modifier,
     primary: Boolean = false,
     enabled: Boolean = true,
+    icon: ImageVector? = null,
 ) {
-    FocusBox(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(12.dp), enabled = enabled) { focused ->
-        val scheme = MaterialTheme.colorScheme
-        val bg = when {
+    val scheme = MaterialTheme.colorScheme
+    FocusBox(
+        onClick = onClick,
+        modifier = modifier,
+        restColor = when {
             !enabled -> scheme.surfaceVariant
-            focused -> scheme.primary
             primary -> scheme.primaryContainer
-            else -> scheme.surfaceVariant
-        }
+            else -> scheme.surfaceContainerHigh
+        },
+        focusColor = scheme.primary,
+        restRadius = 40.dp,
+        focusRadius = 16.dp,
+        focusScale = 1.08f,
+        enabled = enabled,
+    ) { focused ->
         val fg = when {
             !enabled -> scheme.outline
             focused -> scheme.onPrimary
             primary -> scheme.onPrimaryContainer
-            else -> scheme.onSurfaceVariant
+            else -> scheme.onSurface
         }
-        Box(modifier = Modifier.background(bg).padding(horizontal = 24.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
-            Text(text, color = fg, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        }
-    }
-}
-
-@Composable
-fun TvAvatar(type: DeviceType, name: String, size: androidx.compose.ui.unit.Dp = 56.dp) {
-    val label = if (type == DeviceType.TV) "TV" else name.trim().take(1).uppercase().ifEmpty { "?" }
-    Box(
-        modifier = Modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(label, color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-fun DeviceTile(peer: PeerDevice, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    FocusBox(onClick = onClick, modifier = modifier.width(260.dp)) { focused ->
-        val scheme = MaterialTheme.colorScheme
-        Column(
-            modifier = Modifier
-                .background(if (focused) scheme.primaryContainer else scheme.surfaceVariant)
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+        Row(
+            modifier = Modifier.padding(horizontal = 26.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TvAvatar(peer.type, peer.displayName)
+            if (icon != null) Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(24.dp))
+            Text(text, color = fg, style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+@Composable
+private fun OnlinePill(online: Boolean, textColor: Color, dotColor: Color) {
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(textColor.copy(alpha = 0.16f))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(if (online) dotColor else textColor.copy(alpha = 0.4f)),
+        )
+        Text(if (online) "Online" else "Offline", style = MaterialTheme.typography.labelMedium, color = textColor)
+    }
+}
+
+/** A device as a colour-blocked tile; on focus it turns bright and its cookie starts to spin. */
+@Composable
+fun DeviceTile(peer: PeerDevice, onClick: () -> Unit, modifier: Modifier = Modifier, index: Int = 0) {
+    val p = cardPalette(index)
+    FocusBox(
+        onClick = onClick,
+        modifier = modifier.width(268.dp).height(160.dp),
+        restColor = p.container,
+        focusColor = p.accent,
+        restRadius = 36.dp,
+        focusRadius = 20.dp,
+    ) { focused ->
+        val fg = if (focused) p.onAccent else p.onContainer
+        Column(
+            modifier = Modifier.fillMaxSize().padding(20.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                CookieBadge(
+                    size = 60.dp,
+                    color = if (focused) p.container else p.accent,
+                    lobes = 8 + index % 3,
+                    amplitude = 0.08f,
+                    spin = focused,
+                ) {
+                    Icon(
+                        deviceIcon(peer.type),
+                        contentDescription = null,
+                        tint = if (focused) p.onContainer else p.onAccent,
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
                 Spacer(Modifier.weight(1f))
-                Box(
-                    modifier = Modifier
-                        .size(14.dp)
-                        .clip(CircleShape)
-                        .background(if (peer.reachable) scheme.tertiary else scheme.outline),
+                OnlinePill(peer.reachable, textColor = fg, dotColor = fg)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(peer.displayName, style = MaterialTheme.typography.titleLarge, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    if (peer.reachable) peer.host else "Not responding",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = fg.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text(
-                peer.displayName,
-                style = MaterialTheme.typography.titleLarge,
-                color = if (focused) scheme.onPrimaryContainer else scheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                if (peer.reachable) peer.host else "Not responding",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (focused) scheme.onPrimaryContainer else scheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 }
 
 @Composable
 fun ActionTile(title: String, subtitle: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    FocusBox(onClick = onClick, modifier = modifier.width(260.dp)) { focused ->
-        val scheme = MaterialTheme.colorScheme
+    val scheme = MaterialTheme.colorScheme
+    FocusBox(
+        onClick = onClick,
+        modifier = modifier.width(268.dp).height(160.dp),
+        restColor = scheme.surfaceContainerHigh,
+        focusColor = scheme.primary,
+        restRadius = 36.dp,
+        focusRadius = 20.dp,
+    ) { focused ->
+        val fg = if (focused) scheme.onPrimary else scheme.onSurface
         Column(
-            modifier = Modifier
-                .background(if (focused) scheme.primaryContainer else scheme.surface)
-                .border(1.dp, scheme.outline, RoundedCornerShape(16.dp))
-                .padding(20.dp)
-                .height(112.dp),
-            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.fillMaxSize().padding(20.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleLarge,
-                color = if (focused) scheme.onPrimaryContainer else scheme.onSurface,
-            )
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (focused) scheme.onPrimaryContainer else scheme.onSurfaceVariant,
-            )
+            CookieBadge(
+                size = 60.dp,
+                color = if (focused) scheme.primaryContainer else scheme.secondaryContainer,
+                lobes = 9,
+                amplitude = 0.08f,
+                spin = focused,
+            ) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = null,
+                    tint = if (focused) scheme.onPrimaryContainer else scheme.onSecondaryContainer,
+                    modifier = Modifier.size(30.dp),
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleLarge, color = fg)
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = fg.copy(alpha = 0.8f))
+            }
         }
     }
 }
 
 @Composable
-fun SectionTitle(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text,
-        style = MaterialTheme.typography.headlineSmall,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onBackground,
+fun SectionTitle(text: String, modifier: Modifier = Modifier, count: Int? = null) {
+    Row(
         modifier = modifier.padding(vertical = 8.dp),
-    )
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(text, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onBackground)
+        if (count != null && count > 0) {
+            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.tertiaryContainer) {
+                Text(
+                    count.toString(),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -192,25 +288,63 @@ fun TvTransferRow(
 ) {
     val scheme = MaterialTheme.colorScheme
     val failed = item.state == TransferState.FAILED
-    Surface(shape = RoundedCornerShape(16.dp), color = scheme.surface, modifier = modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(item.title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                item.status,
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (failed) scheme.error else scheme.onSurfaceVariant,
-            )
-            val showProgress = item.state == TransferState.ACTIVE || item.state == TransferState.RETRYING ||
-                item.state == TransferState.INTERRUPTED
-            if (showProgress) {
-                if (item.indeterminate) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(8.dp))
-                } else {
-                    LinearProgressIndicator(progress = { item.progress }, modifier = Modifier.fillMaxWidth().height(8.dp))
+    val finished = item.state == TransferState.COMPLETED
+    val showProgress = item.state == TransferState.ACTIVE || item.state == TransferState.RETRYING ||
+        item.state == TransferState.INTERRUPTED
+
+    val container = when {
+        failed -> scheme.errorContainer
+        finished -> scheme.surfaceContainerHigh
+        item.isSend -> scheme.primaryContainer
+        else -> scheme.tertiaryContainer
+    }
+    val onContainer = when {
+        failed -> scheme.onErrorContainer
+        finished -> scheme.onSurface
+        item.isSend -> scheme.onPrimaryContainer
+        else -> scheme.onTertiaryContainer
+    }
+    val accent = when {
+        failed -> scheme.error
+        finished -> scheme.secondary
+        item.isSend -> scheme.primary
+        else -> scheme.tertiary
+    }
+    val onAccent = when {
+        failed -> scheme.onError
+        finished -> scheme.onSecondary
+        item.isSend -> scheme.onPrimary
+        else -> scheme.onTertiary
+    }
+
+    Surface(shape = RoundedCornerShape(36.dp), color = container, contentColor = onContainer, modifier = modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                CookieBadge(size = 56.dp, color = accent, lobes = 7, amplitude = 0.09f, spin = showProgress) {
+                    Icon(
+                        imageVector = if (item.isSend) TvIcons.ArrowUp else TvIcons.ArrowDown,
+                        contentDescription = if (item.isSend) "Sending" else "Receiving",
+                        tint = onAccent,
+                        modifier = Modifier.size(26.dp),
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(item.title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(item.status, style = MaterialTheme.typography.bodyLarge, color = onContainer.copy(alpha = 0.8f))
+                }
+                if (showProgress && !item.indeterminate) {
+                    Text("${(item.progress * 100).toInt()}%", style = MaterialTheme.typography.headlineSmall)
                 }
             }
+            if (showProgress) {
+                TvWavyProgress(
+                    progress = if (item.indeterminate) null else item.progress,
+                    color = accent,
+                    trackColor = accent.copy(alpha = 0.25f),
+                )
+            }
             if (item.detail.isNotEmpty()) {
-                Text(item.detail, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                Text(item.detail, style = MaterialTheme.typography.bodyMedium, color = onContainer.copy(alpha = 0.72f))
             }
             if (item.canCancel || item.canOpen || item.canDismiss) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -223,27 +357,66 @@ fun TvTransferRow(
     }
 }
 
+/** A pill switch whose thumb grows and springs across when it turns on. */
+@Composable
+private fun TvSwitch(checked: Boolean, focused: Boolean) {
+    val scheme = MaterialTheme.colorScheme
+    val thumbSize by animateDpAsState(
+        targetValue = if (checked) 28.dp else 20.dp,
+        animationSpec = expressiveSpring(0.5f, Spring.StiffnessMedium),
+        label = "thumbSize",
+    )
+    val thumbX by animateDpAsState(
+        targetValue = if (checked) 35.dp else 9.dp,
+        animationSpec = expressiveSpring(0.5f, Spring.StiffnessMedium),
+        label = "thumbX",
+    )
+    val track = when {
+        checked -> scheme.tertiary
+        focused -> scheme.onPrimary.copy(alpha = 0.35f)
+        else -> scheme.outline.copy(alpha = 0.6f)
+    }
+    val thumb = when {
+        checked -> scheme.onTertiary
+        focused -> scheme.onPrimary
+        else -> scheme.onSurfaceVariant
+    }
+    Box(modifier = Modifier.size(68.dp, 38.dp).clip(CircleShape).background(track)) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .offset(x = thumbX)
+                .size(thumbSize)
+                .clip(CircleShape)
+                .background(thumb),
+        )
+    }
+}
+
 @Composable
 fun TvToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    FocusBox(onClick = { onChange(!checked) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) { focused ->
-        val scheme = MaterialTheme.colorScheme
+    val scheme = MaterialTheme.colorScheme
+    FocusBox(
+        onClick = { onChange(!checked) },
+        modifier = Modifier.fillMaxWidth(),
+        restColor = scheme.surfaceContainerHigh,
+        focusColor = scheme.primary,
+        restRadius = 28.dp,
+        focusRadius = 16.dp,
+        focusScale = 1.03f,
+    ) { focused ->
+        val fg = if (focused) scheme.onPrimary else scheme.onSurface
+        val sub = if (focused) scheme.onPrimary.copy(alpha = 0.85f) else scheme.onSurfaceVariant
         Row(
-            modifier = Modifier
-                .background(if (focused) scheme.primaryContainer else scheme.surfaceVariant)
-                .padding(horizontal = 20.dp, vertical = 14.dp),
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, color = if (focused) scheme.onPrimaryContainer else scheme.onSurface)
-                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = if (focused) scheme.onPrimaryContainer else scheme.onSurfaceVariant)
+                Text(title, style = MaterialTheme.typography.titleMedium, color = fg)
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = sub)
             }
-            Spacer(Modifier.width(20.dp))
-            Text(
-                if (checked) "ON" else "OFF",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = if (checked) scheme.tertiary else scheme.outline,
-            )
+            Spacer(Modifier.width(24.dp))
+            TvSwitch(checked = checked, focused = focused)
         }
     }
 }
@@ -252,12 +425,16 @@ fun TvToggleRow(title: String, subtitle: String, checked: Boolean, onChange: (Bo
 fun TvDialog(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(44.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 6.dp,
             modifier = Modifier.width(720.dp),
         ) {
-            Column(modifier = Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()).padding(36.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                content = content,
+            )
         }
     }
 }
