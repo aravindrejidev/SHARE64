@@ -22,24 +22,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -47,11 +38,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -66,48 +55,30 @@ import com.share64.app.mobile.Contributor
 import com.share64.app.core.R as CoreR
 
 /**
- * About: logo + version/ABI chips + links, the developer, and GitHub contributors
+ * About: spinning-cookie logo + version/ABI pills + links, the developer, and GitHub contributors
  * (the contributors list quietly falls back to an invitation card when offline or empty).
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val build = remember { AppInfo.read(context) }
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val contributors by produceState<List<Contributor>?>(initialValue = null) {
         value = AboutRepository.contributors()
     }
     val open: (String) -> Unit = { url -> openUrl(context, url) }
 
-    Scaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            LargeTopAppBar(
-                title = { Text("About") },
-                navigationIcon = {
-                    FilledTonalIconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    scrolledContainerColor = MaterialTheme.colorScheme.surface,
-                ),
-                scrollBehavior = scrollBehavior,
-            )
-        },
-    ) { padding ->
+    Scaffold { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 start = 16.dp,
                 end = 16.dp,
                 top = padding.calculateTopPadding() + 4.dp,
-                bottom = padding.calculateBottomPadding() + 32.dp,
+                bottom = padding.calculateBottomPadding() + 40.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
+            item { ScreenHeader(title = "About", onBack = onBack) }
             item { HeroCard(build, open) }
 
             item { SectionLabel("DEVELOPER") }
@@ -130,34 +101,30 @@ fun AboutScreen(onBack: () -> Unit) {
 @Composable
 private fun HeroCard(build: AppInfo.BuildInfo, onOpen: (String) -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    Surface(
-        shape = MaterialTheme.shapes.extraLarge,
-        color = scheme.surfaceContainerHigh,
+    BouncyCard(
+        onClick = null,
         modifier = Modifier.fillMaxWidth(),
+        color = scheme.primaryContainer,
+        contentColor = scheme.onPrimaryContainer,
+        restRadius = 44.dp,
     ) {
         Column(
-            modifier = Modifier
-                .background(Brush.verticalGradient(listOf(scheme.primaryContainer.copy(alpha = 0.45f), Color.Transparent)))
-                .padding(24.dp),
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Box(
-                modifier = Modifier.size(104.dp).clip(CircleShape).background(Color(0xFF070607)),
-                contentAlignment = Alignment.Center,
-            ) {
+            CookieBadge(size = 132.dp, color = Color(0xFF070607), lobes = 12, amplitude = 0.05f, spin = true) {
                 Image(
                     painter = painterResource(CoreR.drawable.logo_mark),
                     contentDescription = "SHARE64 logo",
-                    modifier = Modifier.padding(20.dp),
+                    modifier = Modifier.padding(30.dp),
                 )
             }
-            Text(AppInfo.APP_NAME, style = MaterialTheme.typography.displaySmall)
+            Text(AppInfo.APP_NAME, style = MaterialTheme.typography.displayMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                InfoChip(build.versionName)
-                InfoChip(build.abiLabel)
+                InfoPill(build.versionName, scheme.primary, scheme.onPrimary)
+                InfoPill(build.abiLabel, scheme.tertiaryContainer, scheme.onTertiaryContainer)
             }
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
@@ -170,7 +137,7 @@ private fun HeroCard(build: AppInfo.BuildInfo, onOpen: (String) -> Unit) {
             Text(
                 AppInfo.TAGLINE,
                 style = MaterialTheme.typography.bodyMedium,
-                color = scheme.onSurfaceVariant,
+                color = scheme.onPrimaryContainer.copy(alpha = 0.8f),
                 textAlign = TextAlign.Center,
             )
         }
@@ -178,16 +145,12 @@ private fun HeroCard(build: AppInfo.BuildInfo, onOpen: (String) -> Unit) {
 }
 
 @Composable
-private fun InfoChip(text: String) {
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-    ) {
+private fun InfoPill(text: String, container: Color, content: Color) {
+    Surface(shape = CircleShape, color = container, contentColor = content) {
         Text(
             text,
             style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
         )
     }
 }
@@ -203,27 +166,30 @@ private fun LinkButton(label: String, icon: ImageVector, onClick: () -> Unit) {
 
 @Composable
 private fun DeveloperCard(onOpen: (String) -> Unit) {
-    Card(
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    val p = cardPalette(1)
+    BouncyCard(
+        onClick = { onOpen(AppInfo.DEVELOPER_URL) },
         modifier = Modifier.fillMaxWidth(),
+        color = p.container,
+        contentColor = p.onContainer,
+        restRadius = 40.dp,
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(18.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            RemoteAvatar(AppInfo.DEVELOPER_AVATAR_URL, AppInfo.DEVELOPER_NAME.take(1), 64.dp)
+            RemoteAvatar(AppInfo.DEVELOPER_AVATAR_URL, AppInfo.DEVELOPER_NAME.take(1), 68.dp)
             Column(modifier = Modifier.weight(1f)) {
                 Text(AppInfo.DEVELOPER_NAME, style = MaterialTheme.typography.titleLarge)
                 Text(
                     "Developer · @${AppInfo.DEVELOPER_GITHUB}",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = p.onContainer.copy(alpha = 0.78f),
                 )
             }
-            FilledTonalIconButton(onClick = { onOpen(AppInfo.DEVELOPER_URL) }, modifier = Modifier.size(52.dp)) {
-                Icon(ShareIcons.GitHub, contentDescription = "Open GitHub profile")
+            CookieBadge(size = 52.dp, color = p.accent, lobes = 8, amplitude = 0.07f) {
+                Icon(ShareIcons.GitHub, contentDescription = "Open GitHub profile", tint = p.onAccent, modifier = Modifier.size(26.dp))
             }
         }
     }
@@ -231,43 +197,48 @@ private fun DeveloperCard(onOpen: (String) -> Unit) {
 
 @Composable
 private fun ContributorRow(c: Contributor, index: Int, count: Int, onOpen: (String) -> Unit) {
+    val p = cardPalette(index)
     Surface(
         onClick = { onOpen(c.profileUrl) },
         shape = segmentedShape(index, count),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = p.container,
+        contentColor = p.onContainer,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            RemoteAvatar(c.avatarUrl, c.login.take(1).uppercase(), 48.dp)
+            RemoteAvatar(c.avatarUrl, c.login.take(1).uppercase(), 52.dp)
             Column(modifier = Modifier.weight(1f)) {
                 Text(c.login, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     if (c.contributions == 1) "1 contribution" else "${c.contributions} contributions",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = p.onContainer.copy(alpha = 0.75f),
                 )
             }
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
         }
     }
 }
 
 @Composable
 private fun OpenSourceCard(onOpen: (String) -> Unit) {
-    Card(
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    val scheme = MaterialTheme.colorScheme
+    BouncyCard(
+        onClick = null,
         modifier = Modifier.fillMaxWidth(),
+        color = scheme.surfaceContainerHigh,
+        contentColor = scheme.onSurface,
+        restRadius = 40.dp,
     ) {
-        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(modifier = Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text(
                 "SHARE64 is a small independent project. Ideas, bug reports and pull requests are welcome on GitHub.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = scheme.onSurfaceVariant,
             )
             ExpressiveButton(onClick = { onOpen(AppInfo.REPO_URL) }, kind = ButtonKind.Tonal) { Text("Open on GitHub") }
         }
@@ -277,23 +248,26 @@ private fun OpenSourceCard(onOpen: (String) -> Unit) {
 @Composable
 private fun LoadingRow() {
     Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-        ExpressiveLoading(indicatorSize = 36.dp)
+        ExpressiveLoading(indicatorSize = 44.dp)
     }
 }
 
-/** Round avatar from the web; shows the initial until (or unless) the image arrives. */
+/** Cookie-shaped avatar from the web; shows the initial until (or unless) the image arrives. */
 @Composable
 private fun RemoteAvatar(url: String, initial: String, avatarSize: Dp) {
     val bitmap by produceState<ImageBitmap?>(initialValue = null, url) { value = AboutRepository.avatar(url) }
     Box(
-        modifier = Modifier.size(avatarSize).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
+        modifier = Modifier
+            .size(avatarSize)
+            .clip(BlobShape(lobes = 10, amplitude = 0.05f))
+            .background(MaterialTheme.colorScheme.primary),
         contentAlignment = Alignment.Center,
     ) {
         val image = bitmap
         if (image != null) {
             Image(bitmap = image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         } else {
-            Text(initial, color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
+            Text(initial, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
         }
     }
 }

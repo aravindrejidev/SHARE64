@@ -26,20 +26,15 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,22 +43,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.share64.app.mobile.MainViewModel
 import com.share64.network.DiscoveryStatus
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Home, Material 3 Expressive style: a big heavy title, a status hero card, colour-blocked device
+ * cards that spring in, wavy-progress transfer cards and a FAB menu with bouncy motion.
+ */
 @Composable
 fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     var showManual by remember { mutableStateOf(false) }
     var fabExpanded by remember { mutableStateOf(false) }
+    val scheme = MaterialTheme.colorScheme
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         vm.onFilesPicked(uris)
@@ -84,23 +81,7 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
-            modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-            topBar = {
-                LargeTopAppBar(
-                    title = { Text("SHARE64") },
-                    actions = {
-                        FilledTonalIconButton(onClick = onOpenSettings) {
-                            Icon(Icons.Default.Settings, contentDescription = "Settings")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        scrolledContainerColor = MaterialTheme.colorScheme.surface,
-                    ),
-                    scrollBehavior = scrollBehavior,
-                )
-            },
-            snackbarHost = { SnackbarHost(snackbar, modifier = Modifier.padding(end = 72.dp)) },
+            snackbarHost = { SnackbarHost(snackbar, modifier = Modifier.padding(end = 88.dp)) },
         ) { padding ->
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 160.dp),
@@ -108,25 +89,50 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
                 contentPadding = PaddingValues(
                     start = 16.dp,
                     end = 16.dp,
-                    top = padding.calculateTopPadding() + 8.dp,
-                    bottom = padding.calculateBottomPadding() + 120.dp,
+                    top = padding.calculateTopPadding() + 4.dp,
+                    bottom = padding.calculateBottomPadding() + 132.dp,
                 ),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                item(key = "status", span = { GridItemSpan(maxLineSpan) }) { StatusBanner(state) }
+                item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
+                    ScreenHeader(
+                        title = "SHARE64",
+                        subtitle = "Local Wi-Fi file sharing",
+                        trailing = {
+                            CookieIconButton(
+                                onClick = onOpenSettings,
+                                icon = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                container = scheme.primaryContainer,
+                                content = scheme.onPrimaryContainer,
+                                buttonSize = 56.dp,
+                                lobes = 9,
+                            )
+                        },
+                    )
+                }
+
+                item(key = "status", span = { GridItemSpan(maxLineSpan) }) { StatusHero(state) }
 
                 item(key = "devices-title", span = { GridItemSpan(maxLineSpan) }) {
-                    SectionHeader("Nearby devices", actionLabel = "Add by address", onAction = { showManual = true })
+                    SectionHeader(
+                        "Nearby",
+                        count = state.peers.size,
+                        actionLabel = "Add by address",
+                        onAction = { showManual = true },
+                    )
                 }
                 if (state.peers.isEmpty()) {
                     item(key = "devices-empty", span = { GridItemSpan(maxLineSpan) }) {
                         EmptyDevices(searching = state.status is DiscoveryStatus.Running)
                     }
                 } else {
-                    items(state.peers, key = { it.id }) { peer ->
+                    itemsIndexed(state.peers, key = { _, peer -> peer.id }) { index, peer ->
                         DeviceCard(
                             peer = peer,
+                            index = index,
+                            modifier = Modifier.animateItem(),
                             onClick = {
                                 vm.chooseTarget(peer)
                                 picker.launch(arrayOf("*/*"))
@@ -136,10 +142,13 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
                 }
 
                 if (state.transfers.isNotEmpty()) {
-                    item(key = "transfers-title", span = { GridItemSpan(maxLineSpan) }) { SectionHeader("Transfers") }
+                    item(key = "transfers-title", span = { GridItemSpan(maxLineSpan) }) {
+                        SectionHeader("Transfers", count = state.transfers.size)
+                    }
                     items(state.transfers, key = { it.id }, span = { GridItemSpan(maxLineSpan) }) { t ->
                         TransferCard(
                             item = t,
+                            modifier = Modifier.animateItem(),
                             onCancel = { vm.cancel(t.id) },
                             onDismiss = { vm.dismiss(t.id) },
                             onOpen = {
@@ -156,7 +165,7 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f))
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.38f))
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
                         fabExpanded = false
                     },
