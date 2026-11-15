@@ -21,6 +21,10 @@ Config sanitized(Config c) {
   c.done_timeout_ms = std::max(c.done_timeout_ms, 1000);
   c.retry_base_ms = std::max(c.retry_base_ms, 50);
   c.retry_max_ms = std::max(c.retry_max_ms, c.retry_base_ms);
+  c.keepalive_idle_s = std::max(c.keepalive_idle_s, 1);
+  c.keepalive_interval_s = std::max(c.keepalive_interval_s, 1);
+  c.keepalive_count = std::max(c.keepalive_count, 1);
+  c.offline_patience_ms = std::max(c.offline_patience_ms, 0);
   if (c.device_name.size() > 64) c.device_name.resize(64);
   return c;
 }
@@ -62,6 +66,15 @@ void Engine::respond(uint64_t id, bool accept) { rx_->respond(id, accept); }
 void Engine::cancel(uint64_t id) {
   tx_->cancel(id);
   rx_->cancel(id);
+}
+
+void Engine::network_changed(bool up, bool drop_connections) {
+  tx_->set_network(up, drop_connections);
+  if (drop_connections) rx_->drop_sessions("network lost");
+}
+
+size_t Engine::update_peer_address(const std::string& peer_key, const std::string& host, uint16_t port) {
+  return tx_->update_peer(peer_key, host, port);
 }
 
 }  // namespace s64

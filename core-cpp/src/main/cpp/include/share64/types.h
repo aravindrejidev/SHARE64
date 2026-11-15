@@ -64,6 +64,14 @@ struct Config {
   int max_retries = 60;                     // consecutive attempts without progress
   int retry_base_ms = 400;
   int retry_max_ms = 4000;
+  // Socket-level heartbeat (TCP keep-alive): a silent peer is declared dead after
+  // idle + interval * count seconds (6 s by default), long before the 15 s I/O timeout.
+  int keepalive_idle_s = 3;
+  int keepalive_interval_s = 1;
+  int keepalive_count = 3;
+  // While the host app reports "network down" a sender keeps waiting (without using up
+  // max_retries) for this long before it gives up.
+  int offline_patience_ms = 30 * 60 * 1000;
   uint32_t max_sessions = 8;                // concurrent incoming connections
   bool auto_accept = false;
   std::string device_name = "SHARE64";

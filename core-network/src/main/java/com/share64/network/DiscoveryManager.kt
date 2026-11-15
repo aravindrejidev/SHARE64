@@ -3,6 +3,8 @@ package com.share64.network
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.util.Log
+import com.share64.core.TransferEngine
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -28,7 +30,7 @@ import kotlin.coroutines.resume
 sealed interface DiscoveryStatus {
     data object Stopped : DiscoveryStatus
     data object NoNetwork : DiscoveryStatus
-    data class Running(val address: String) : DiscoveryStatus
+    data class Running(val address: String, val network: NetworkKind = NetworkKind.WIFI) : DiscoveryStatus
     data class Error(val message: String) : DiscoveryStatus
 }
 
@@ -54,6 +56,10 @@ class DiscoveryManager(
     /** LAN IPv4 addresses of this device (show them for manual connection). */
     val localAddresses: StateFlow<List<String>> = _addresses.asStateFlow()
 
+    private val _profile = MutableStateFlow(NetworkProfile.NONE)
+    /** What kind of network this is (home Wi-Fi, a hotspot, ...), detected automatically. */
+    val profile: StateFlow<NetworkProfile> = _profile.asStateFlow()
+
     private val _status = MutableStateFlow<DiscoveryStatus>(DiscoveryStatus.Stopped)
     val status: StateFlow<DiscoveryStatus> = _status.asStateFlow()
 
@@ -65,18 +71,27 @@ class DiscoveryManager(
         if (job?.isActive == true) return
         job = scope.launch {
             try {
-                watcher.changes().collectLatest { addresses ->
-                    _addresses.value = addresses
+                watcher.profiles().collectLatest { profile ->
+                    _profile.value = profile
+                    _addresses.value = profile.addresses
                     clearDiscovered()
-                    if (addresses.isEmpty()) {
+                    if (profile.addresses.isEmpty()) {
                         _status.value = DiscoveryStatus.NoNetwork
                         return@collectLatest
                     }
-                    while (true) {
-                        _status.value = DiscoveryStatus.Running(addresses.first())
-                        val reason = runNsd(port)
-                        _status.value = DiscoveryStatus.Error(reason)
-                        delay(RESTART_DELAY_MS)
+                    coroutineScope {
+                        // On hotspots DNS-SD is often blocked: also knock on the subnet's doors.
+                        val sweeper = if (profile.sweepTargets.isNotEmpty()) launch { sweepLoop(profile) } else null
+                        try {
+                            while (true) {
+                                _status.value = DiscoveryStatus.Running(profile.addresses.first(), profile.kind)
+                                val reason = runNsd(port)
+                                _status.value = DiscoveryStatus.Error(reason)
+                                delay(RESTART_DELAY_MS)
+                            }
+                        } finally {
+                            sweeper?.cancel()
+                        }
                     }
                 }
             } finally {
@@ -113,7 +128,7 @@ class DiscoveryManager(
         val registration = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) { ownServiceName = info.serviceName }
             override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
-                failures.trySend("service registration failed ($errorCode)")
+                failures.trySend(describeNsdFailure("Couldn't announce this device", errorCode))
             }
             override fun onServiceUnregistered(info: NsdServiceInfo) {}
             override fun onUnregistrationFailed(info: NsdServiceInfo, errorCode: Int) {}
@@ -131,7 +146,7 @@ class DiscoveryManager(
                 if (removed != null) publish()
             }
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                failures.trySend("discovery start failed ($errorCode)")
+                failures.trySend(describeNsdFailure("Couldn't look for other devices", errorCode))
             }
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
         }
@@ -251,9 +266,71 @@ class DiscoveryManager(
                 peers.map { p -> async(Dispatchers.IO) { p.id to HandshakeProbe.isReachable(p.host, p.port) } }.awaitAll()
             }
             val now = System.currentTimeMillis()
-            synchronized(registry) { results.forEach { (id, ok) -> registry.markReachable(id, ok, now) } }
+            synchronized(registry) {
+                results.forEach { (id, ok) -> registry.markReachable(id, ok, now) }
+                registry.dropUnreachableScanned()
+            }
             publish()
         }
+    }
+
+    // ---------------------------------------------------------------- subnet sweep (hotspots)
+
+    /**
+     * While nobody has been found by DNS-SD, handshake with every address of the hotspot subnet.
+     * Hits become peers with a "scan:" id until DNS-SD tells us who they really are.
+     */
+    private suspend fun sweepLoop(profile: NetworkProfile) {
+        delay(SWEEP_FIRST_DELAY_MS)
+        while (true) {
+            if (synchronized(registry) { registry.discoveredCount() } == 0) {
+                val hosts = profile.sweepTargets.flatMap { SubnetScanner.candidates(it.ip, it.prefix) }.distinct()
+                val port = TransferEngine.DEFAULT_PORT
+                val hits = try {
+                    SubnetScanner.scan(hosts, port) { host ->
+                        HandshakeProbe.query(host, port, SWEEP_TIMEOUT_MS, local.displayName)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "subnet sweep failed", e)
+                    emptyList()
+                }
+                if (hits.isNotEmpty()) {
+                    val now = System.currentTimeMillis()
+                    var added = false
+                    synchronized(registry) {
+                        for (h in hits) {
+                            val peer = PeerDevice(
+                                id = "${PeerRegistry.SCAN_PREFIX}${h.host}:${h.port}",
+                                serviceName = "",
+                                displayName = h.name,
+                                type = DeviceType.OTHER,
+                                host = h.host,
+                                port = h.port,
+                                protocolVersion = h.protocolVersion,
+                                reachable = true,
+                                lastSeenMs = now,
+                            )
+                            if (registry.upsert(peer)) added = true
+                        }
+                    }
+                    if (added) publish()
+                }
+            }
+            delay(SWEEP_INTERVAL_MS)
+        }
+    }
+
+    /** NsdManager error codes, in words a person can act on. */
+    private fun describeNsdFailure(what: String, code: Int): String {
+        val why = when (code) {
+            NsdManager.FAILURE_ALREADY_ACTIVE -> "Android is still busy with the previous request"
+            NsdManager.FAILURE_MAX_LIMIT -> "too many apps are using device discovery"
+            NsdManager.FAILURE_INTERNAL_ERROR -> "Android's discovery service hiccuped"
+            else -> "error $code"
+        }
+        return "$what ($why)"
     }
 
     private fun clearDiscovered() {
@@ -269,5 +346,9 @@ class DiscoveryManager(
         const val RESTART_DELAY_MS = 3_000L
         const val RESOLVE_TIMEOUT_MS = 6_000L
         const val PROBE_INTERVAL_MS = 6_000L
+        const val SWEEP_FIRST_DELAY_MS = 4_000L
+        const val SWEEP_INTERVAL_MS = 10_000L
+        const val SWEEP_TIMEOUT_MS = 600
+        const val TAG = "SHARE64"
     }
 }

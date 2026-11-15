@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <poll.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -18,6 +19,7 @@
 #include <thread>
 #include <vector>
 
+#include "../main/cpp/src/net.h"
 #include "share64/engine.h"
 #include "share64/sha256.h"
 
@@ -451,6 +453,145 @@ static void test_small_chunks_many_slots() {
   std::printf("  64 MB in %.2fs = %.0f MB/s (loopback, includes SHA-256 both sides)\n", secs, 64.0 / secs);
 }
 
+
+// ---------------------------------------------------------------- network stability
+static void test_keepalive_options() {
+  std::printf("[heartbeat] TCP keep-alive options are applied from the config\n");
+  Err e = Err::Ok;
+  uint16_t port = 0;
+  const int lfd = net::listen_tcp(0, &port, e);
+  CHECK(lfd >= 0, "listen");
+  std::atomic<bool> never{false};
+  const int cfd = net::connect_tcp("127.0.0.1", port, 2000, never, e);
+  CHECK(cfd >= 0, "connect");
+  net::tune(cfd, 4000, 3, 1, 3);
+  auto geti = [&](int level, int opt) {
+    int v = -1;
+    socklen_t l = sizeof v;
+    getsockopt(cfd, level, opt, &v, &l);
+    return v;
+  };
+  CHECK(geti(SOL_SOCKET, SO_KEEPALIVE) == 1, "SO_KEEPALIVE");
+  CHECK(geti(IPPROTO_TCP, TCP_KEEPIDLE) == 3, "idle=%d", geti(IPPROTO_TCP, TCP_KEEPIDLE));
+  CHECK(geti(IPPROTO_TCP, TCP_KEEPINTVL) == 1, "intvl=%d", geti(IPPROTO_TCP, TCP_KEEPINTVL));
+  CHECK(geti(IPPROTO_TCP, TCP_KEEPCNT) == 3, "cnt=%d", geti(IPPROTO_TCP, TCP_KEEPCNT));
+  CHECK(geti(IPPROTO_TCP, TCP_USER_TIMEOUT) == 4000, "user timeout=%d", geti(IPPROTO_TCP, TCP_USER_TIMEOUT));
+  net::tune(cfd, 60000, 3, 1, 3);  // a long I/O timeout never lets a dead path linger more than 10 s
+  CHECK(geti(IPPROTO_TCP, TCP_USER_TIMEOUT) == 10000, "user timeout cap=%d", geti(IPPROTO_TCP, TCP_USER_TIMEOUT));
+  ::close(cfd);
+  ::close(lfd);
+}
+
+static void test_network_drop_resumes() {
+  std::printf("[network] connectivity lost mid-transfer -> instant drop, reconnect, resume from last verified chunk\n");
+  Rig r;
+  Proxy px;
+  px.throttle_us = 1500;
+  px.start(r.port);
+  const std::string src = r.srcdir + "/netdrop.bin";
+  make_file(src, 24 * 1024 * 1024, 33);
+  r.tx->send_file("127.0.0.1", px.port, src, "netdrop.bin", "peerN");
+  CHECK(r.ss.wait_pred(30000, [](const Event& e) { return e.kind == EventKind::Progress && e.verified >= 4u * 1024 * 1024; }),
+        "never reached 4 MB verified");
+  px.throttle_us = 0;
+  const auto t0 = std::chrono::steady_clock::now();
+  r.tx->network_changed(true, true);  // both phones report that their link address vanished
+  r.rx->network_changed(true, true);
+  Event re;
+  CHECK(r.ss.wait(EventKind::Retrying, 3000, &re), "sender was not told promptly");
+  const auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+  CHECK(dt < 1500, "drop took %lld ms (keep-alive would need >= 6 s)", static_cast<long long>(dt));
+  CHECK(re.message == "network lost", "retry reason '%s'", re.message.c_str());
+  Event ie;
+  CHECK(r.rs.wait(EventKind::Interrupted, 3000, &ie), "receiver was not told");
+  CHECK(ie.message == "network lost", "interrupt reason '%s'", ie.message.c_str());
+  Event ce;
+  CHECK(r.ss.wait(EventKind::Completed, 40000, &ce), "sender did not complete after the drop");
+  CHECK(r.ss.has_started_with_progress(), "restarted from zero instead of resuming");
+  Event rc;
+  CHECK(r.rs.wait(EventKind::Completed, 10000, &rc), "receiver never completed");
+  CHECK(files_equal(src, rc.name), "FILE CONTENT DIFFERS after network drop");
+  px.shutdown_all();
+}
+
+static void test_offline_patience() {
+  std::printf("[network] offline: sender waits without burning retries, reconnects the moment the net is back\n");
+  Config tcfg = test_cfg("sender", true);
+  tcfg.max_retries = 2;      // normally gives up after ~3 attempts
+  tcfg.retry_max_ms = 100;
+  tcfg.offline_patience_ms = 60000;
+
+  // control: same settings, network never reported down -> the job fails fast
+  {
+    Rig c(true, tcfg);
+    c.rx->stop_receiver();
+    const std::string src = c.srcdir + "/ctl.bin";
+    make_file(src, 300 * 1024, 5);
+    c.tx->send_file("127.0.0.1", c.port, src, "ctl.bin", "peerCtl");
+    CHECK(c.ss.wait(EventKind::Failed, 8000), "control: expected the job to give up");
+  }
+
+  Rig r(true, tcfg);
+  r.rx->stop_receiver();  // the other phone's hotspot is off
+  r.tx->network_changed(false, true);
+  const std::string src = r.srcdir + "/offline.bin";
+  make_file(src, 5 * 1024 * 1024, 6);
+  r.tx->send_file("127.0.0.1", r.port, src, "offline.bin", "peerO");
+  std::this_thread::sleep_for(std::chrono::milliseconds(2500));  // far beyond the 3 normal attempts
+  CHECK(r.ss.count(EventKind::Failed) == 0, "gave up while the network was down");
+  CHECK(r.ss.count(EventKind::Retrying) >= 1, "UI never saw a reconnecting state");
+  uint16_t p2 = 0;
+  CHECK(r.rx->start_receiver(r.rxdir, r.port, &p2) == Err::Ok, "restart receiver on the same port");
+  r.tx->network_changed(true, false);  // Wi-Fi is back
+  Event ce;
+  CHECK(r.ss.wait(EventKind::Completed, 15000, &ce), "no completion after the network came back");
+  Event rc;
+  CHECK(r.rs.wait(EventKind::Completed, 10000, &rc), "receiver never completed");
+  CHECK(files_equal(src, rc.name), "FILE CONTENT DIFFERS after offline wait");
+}
+
+static void test_offline_patience_expires() {
+  std::printf("[network] offline for longer than the patience window -> clean terminal failure\n");
+  Config tcfg = test_cfg("sender", true);
+  tcfg.offline_patience_ms = 800;
+  Rig r(true, tcfg);
+  r.rx->stop_receiver();
+  r.tx->network_changed(false, true);
+  const std::string src = r.srcdir + "/gone.bin";
+  make_file(src, 200 * 1024, 8);
+  r.tx->send_file("127.0.0.1", r.port, src, "gone.bin", "peerG");
+  Event fe;
+  CHECK(r.ss.wait(EventKind::Failed, 8000, &fe), "patience never expired");
+  CHECK(fe.err == Err::Timeout, "err=%s", err_name(fe.err));
+}
+
+static void test_peer_address_update() {
+  std::printf("[network] peer came back on a new address -> running send switches to it immediately\n");
+  Config tcfg = test_cfg("sender", true);
+  tcfg.retry_base_ms = 3000;  // a long back-off: only the address update can make this fast
+  tcfg.retry_max_ms = 3000;
+  Rig r(true, tcfg);
+  // an address where nothing listens
+  Err e = Err::Ok;
+  uint16_t dead = 0;
+  const int lfd = net::listen_tcp(0, &dead, e);
+  ::close(lfd);
+  const std::string src = r.srcdir + "/moved.bin";
+  make_file(src, 6 * 1024 * 1024, 9);
+  r.tx->send_file("127.0.0.1", dead, src, "moved.bin", "peerMoved");
+  CHECK(r.ss.wait(EventKind::Retrying, 5000), "no retry against the dead address");
+  const auto t0 = std::chrono::steady_clock::now();
+  CHECK(r.tx->update_peer_address("peerMoved", "127.0.0.1", r.port) == 1, "update_peer_address count");
+  CHECK(r.tx->update_peer_address("someoneElse", "127.0.0.1", r.port) == 0, "unrelated peer must not match");
+  Event ce;
+  CHECK(r.ss.wait(EventKind::Completed, 15000, &ce), "did not complete at the new address");
+  const auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+  CHECK(dt < 2500, "took %lld ms (the 3 s back-off was not skipped)", static_cast<long long>(dt));
+  Event rc;
+  CHECK(r.rs.wait(EventKind::Completed, 10000, &rc), "receiver never completed");
+  CHECK(files_equal(src, rc.name), "FILE CONTENT DIFFERS after address switch");
+}
+
 int main() {
   test_sha();
   test_basic_sizes();
@@ -458,6 +599,11 @@ int main() {
   test_restart_resume();
   test_user_decisions();
   test_small_chunks_many_slots();
+  test_keepalive_options();
+  test_network_drop_resumes();
+  test_offline_patience();
+  test_offline_patience_expires();
+  test_peer_address_update();
   std::printf(g_fail ? "\n%d CHECK(S) FAILED\n" : "\nALL PASSED\n", g_fail);
   return g_fail ? 1 : 0;
 }

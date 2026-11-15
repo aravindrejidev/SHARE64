@@ -23,6 +23,7 @@ class Receiver {
   void stop();
   void respond(uint64_t id, bool accept);  // answer an IncomingOffer event
   void cancel(uint64_t id);                // user cancel: deletes the partial, rejects reconnects
+  void drop_sessions(const char* why);     // network lost: close live connections, keep partials
 
  private:
   struct Session;

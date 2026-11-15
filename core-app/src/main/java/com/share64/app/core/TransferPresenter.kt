@@ -62,11 +62,12 @@ object TransferPresenter {
                 detail = progressText
             }
             TransferState.RETRYING -> {
-                status = "Connection lost — reconnecting"
+                // "network lost": Android reported the Wi-Fi / hotspot gone; the sender is waiting for it.
+                status = if (networkLost(s.message)) "Waiting for the network…" else "Connection lost — reconnecting"
                 detail = if (s.verifiedBytes > 0) "Resuming from ${Formatting.bytes(s.verifiedBytes, locale)}" else "Attempt ${maxOf(s.attempt, 1)}"
             }
             TransferState.INTERRUPTED -> {
-                status = "Connection lost — waiting for the sender"
+                status = if (networkLost(s.message)) "Network lost — waiting for the sender" else "Connection lost — waiting for the sender"
                 detail = "Kept ${Formatting.bytes(s.verifiedBytes, locale)} so far"
             }
             TransferState.COMPLETED -> {
@@ -102,10 +103,14 @@ object TransferPresenter {
         )
     }
 
+    private fun networkLost(message: String) = message.startsWith("network", ignoreCase = true)
+
     fun errorText(error: ErrorCode, message: String): String = when (error) {
         ErrorCode.REJECTED -> "The other device declined the file"
         ErrorCode.DISK_FULL -> "Not enough free storage"
-        ErrorCode.TIMEOUT -> "The other device stopped responding"
+        ErrorCode.TIMEOUT ->
+            if (networkLost(message)) "No network for too long — send it again to continue where it stopped"
+            else "The other device stopped responding"
         ErrorCode.HASH_MISMATCH -> "Data kept arriving corrupted"
         ErrorCode.BUSY -> "The other device is busy"
         ErrorCode.BAD_NAME -> "Invalid file name"

@@ -7,8 +7,11 @@ import java.net.NetworkInterface
 object LocalAddresses {
     private val lanPrefixes = listOf("wlan", "eth", "ap", "swlan", "softap", "p2p", "br", "en", "rndis", "usb")
 
-    fun ipv4(): List<String> {
-        val out = ArrayList<String>()
+    fun ipv4(): List<String> = lan().map { it.ip }
+
+    /** Same as [ipv4] but with the subnet prefix length and the interface each address lives on. */
+    fun lan(): List<LanAddress> {
+        val out = ArrayList<LanAddress>()
         val interfaces = try {
             NetworkInterface.getNetworkInterfaces()
         } catch (e: Exception) {
@@ -19,13 +22,17 @@ object LocalAddresses {
                 if (!nif.isUp || nif.isLoopback) continue
                 val name = nif.name.lowercase()
                 if (lanPrefixes.none { name.startsWith(it) }) continue
-                for (addr in nif.inetAddresses) {
-                    if (addr is Inet4Address && addr.isSiteLocalAddress) addr.hostAddress?.let { out += it }
+                for (ia in nif.interfaceAddresses) {
+                    val addr = ia.address
+                    if (addr is Inet4Address && addr.isSiteLocalAddress) {
+                        val ip = addr.hostAddress ?: continue
+                        out += LanAddress(ip, ia.networkPrefixLength.toInt(), nif.name)
+                    }
                 }
             } catch (_: Exception) {
                 // interface vanished while enumerating
             }
         }
-        return out.distinct().sorted()
+        return out.distinctBy { it.ip }.sortedBy { it.ip }
     }
 }

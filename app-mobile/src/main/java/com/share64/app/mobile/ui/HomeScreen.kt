@@ -27,14 +27,17 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -60,6 +63,7 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     var showManual by remember { mutableStateOf(false) }
     var fabExpanded by remember { mutableStateOf(false) }
+    var confirmStop by remember { mutableStateOf(false) }
     val scheme = MaterialTheme.colorScheme
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -78,6 +82,7 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
         vm.messages.collect { snackbar.showSnackbar(it) }
     }
     BackHandler(enabled = fabExpanded) { fabExpanded = false }
+    LaunchedEffect(state.sharingEnabled) { if (!state.sharingEnabled) fabExpanded = false }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -113,19 +118,30 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
                     )
                 }
 
-                item(key = "status", span = { GridItemSpan(maxLineSpan) }) { StatusHero(state) }
+                item(key = "status", span = { GridItemSpan(maxLineSpan) }) {
+                    StatusHero(
+                        state = state,
+                        onSharingChange = { on ->
+                            // Stopping with transfers running deserves a second thought.
+                            if (!on && state.activeTransfers > 0) confirmStop = true else vm.setSharingEnabled(on)
+                        },
+                    )
+                }
 
                 item(key = "devices-title", span = { GridItemSpan(maxLineSpan) }) {
                     SectionHeader(
                         "Nearby",
                         count = state.peers.size,
-                        actionLabel = "Add by address",
+                        actionLabel = if (state.sharingEnabled) "Add by address" else null,
                         onAction = { showManual = true },
                     )
                 }
-                if (state.peers.isEmpty()) {
+                if (!state.sharingEnabled || state.peers.isEmpty()) {
                     item(key = "devices-empty", span = { GridItemSpan(maxLineSpan) }) {
-                        EmptyDevices(searching = state.status is DiscoveryStatus.Running)
+                        EmptyDevices(
+                            searching = state.status is DiscoveryStatus.Running,
+                            sharingOff = !state.sharingEnabled,
+                        )
                     }
                 } else {
                     itemsIndexed(state.peers, key = { _, peer -> peer.id }) { index, peer ->
@@ -172,17 +188,45 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
             )
         }
 
-        ExpressiveFabMenu(
-            expanded = fabExpanded,
-            onExpandedChange = { fabExpanded = it },
-            actions = listOf(
-                FabAction("Send files", Icons.AutoMirrored.Filled.Send) {
-                    vm.chooseTarget(null)
-                    picker.launch(arrayOf("*/*"))
-                },
-                FabAction("Add by address", Icons.Default.Search) { showManual = true },
-            ),
-            modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp),
+        if (state.sharingEnabled) {
+            ExpressiveFabMenu(
+                expanded = fabExpanded,
+                onExpandedChange = { fabExpanded = it },
+                actions = listOf(
+                    FabAction("Send files", Icons.AutoMirrored.Filled.Send) {
+                        vm.chooseTarget(null)
+                        picker.launch(arrayOf("*/*"))
+                    },
+                    FabAction("Add by address", Icons.Default.Search) { showManual = true },
+                ),
+                modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp),
+            )
+        }
+    }
+
+    if (confirmStop) {
+        val n = state.activeTransfers
+        AlertDialog(
+            onDismissRequest = { confirmStop = false },
+            shape = RoundedCornerShape(40.dp),
+            containerColor = scheme.surfaceContainerHigh,
+            title = { Text("Stop sharing?", style = MaterialTheme.typography.headlineSmall) },
+            text = {
+                Text(
+                    "$n transfer${if (n == 1) " is" else "s are"} running. They pause here, nothing already " +
+                        "received is lost, and sending the file again continues where it stopped.",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            },
+            confirmButton = {
+                ExpressiveButton(onClick = {
+                    confirmStop = false
+                    vm.setSharingEnabled(false)
+                }) { Text("Stop sharing") }
+            },
+            dismissButton = {
+                ExpressiveButton(onClick = { confirmStop = false }, kind = ButtonKind.Tonal) { Text("Keep sharing") }
+            },
         )
     }
 

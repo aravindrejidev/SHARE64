@@ -48,6 +48,10 @@ data class MainUiState(
     val transfers: List<TransferItem> = emptyList(),
     val offer: IncomingOffer? = null,
     val pendingFiles: List<OutgoingFile> = emptyList(),
+    /** Master switch: false means no engine, no listener, no background service, no wake locks. */
+    val sharingEnabled: Boolean = true,
+    /** Transfers that are moving (or reconnecting) right now. */
+    val activeTransfers: Int = 0,
 )
 
 data class SettingsState(
@@ -84,6 +88,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _settings = MutableStateFlow(readSettings())
     val settingsState: StateFlow<SettingsState> = _settings.asStateFlow()
 
+    private val sharing = MutableStateFlow(settings.sharingEnabled)
+
     private val pending = MutableStateFlow<List<OutgoingFile>>(emptyList())
     /** Set when the user tapped a device card before picking files: send straight to it. */
     private var targetPeer: PeerDevice? = null
@@ -109,7 +115,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         pending,
         ShareRuntime.receivedUris,
         ShareRuntime.receivedLocations,
-    ) { node, files, received, locations ->
+        sharing,
+    ) { node, files, received, locations, sharingOn ->
         val ordered = TransferPresenter.order(node.transfers.values)
         val offer = ordered.firstOrNull { it.state == TransferState.OFFERED }
         MainUiState(
@@ -124,6 +131,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             },
             offer = offer?.let { IncomingOffer(it.id, it.name, it.peerName ?: "another device", Formatting.bytes(it.totalBytes)) },
             pendingFiles = files,
+            sharingEnabled = sharingOn,
+            activeTransfers = ordered.count { it.state == TransferState.ACTIVE || it.state == TransferState.RETRYING },
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MainUiState(deviceName = identity.displayName))
 
@@ -159,7 +168,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun sendTo(peer: PeerDevice, files: List<OutgoingFile>) {
         val node = ShareRuntime.node.value
         if (node == null) {
-            _messages.send("SHARE64 is still starting — try again in a moment")
+            _messages.send(
+                if (settings.sharingEnabled) "SHARE64 is still starting — try again in a moment"
+                else "Sharing is off. Turn it on first.",
+            )
             return
         }
         var started = 0
@@ -187,7 +199,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val node = ShareRuntime.node.value
             if (node == null) {
-                _messages.send("SHARE64 is still starting — try again in a moment")
+                _messages.send(
+                    if (settings.sharingEnabled) "SHARE64 is still starting — try again in a moment"
+                    else "Sharing is off. Turn it on first.",
+                )
                 return@launch
             }
             node.connectManually(input).fold(
@@ -198,6 +213,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun postMessage(text: String) { _messages.trySend(text) }
+
+    // ---------------------------------------------------------------- master switch
+
+    /**
+     * Starts or stops the whole sharing stack. Off: the native engine closes its sockets, the
+     * background service stops, wake locks are released and the notification disappears; unfinished
+     * receives keep their partial data and resume when the file is sent again. On: everything
+     * starts again from scratch.
+     */
+    fun setSharingEnabled(enabled: Boolean) {
+        if (settings.sharingEnabled == enabled && sharing.value == enabled) return
+        settings.sharingEnabled = enabled
+        sharing.value = enabled
+        if (enabled) {
+            ShareService.start(appContext)
+            postMessage("Sharing is on")
+        } else {
+            pending.value = emptyList()
+            targetPeer = null
+            ShareService.stop(appContext)
+            postMessage("Sharing is off")
+        }
+    }
 
     // ---------------------------------------------------------------- settings
 

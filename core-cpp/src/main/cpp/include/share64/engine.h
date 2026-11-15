@@ -33,6 +33,18 @@ class Engine {
   void respond(uint64_t id, bool accept);  // answer an IncomingOffer
   void cancel(uint64_t id);                // works for both directions
 
+  // The host app tells the engine what the OS says about connectivity.
+  //   up = false : the network is gone. Senders wait (without using up retries) until it is back.
+  //   up = true  : the network is (back) up. Waiting senders reconnect immediately.
+  //   drop_connections : live connections are probably dead (their address vanished). They are
+  //                      closed at once instead of waiting for the keep-alive to notice; partial
+  //                      data is kept and every transfer resumes from the last verified chunk.
+  void network_changed(bool up, bool drop_connections);
+
+  // A peer re-appeared under a new address (hotspot restarted, DHCP lease changed): running sends
+  // to peer_key use host:port from their next attempt on. Returns how many transfers were updated.
+  size_t update_peer_address(const std::string& peer_key, const std::string& host, uint16_t port);
+
  private:
   Config cfg_;
   std::unique_ptr<Receiver> rx_;

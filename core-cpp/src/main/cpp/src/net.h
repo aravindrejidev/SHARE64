@@ -16,7 +16,9 @@ int listen_tcp(uint16_t port, uint16_t* bound, Err& err);
 // Returns a client fd, or -1 when `stop` is raised / on a transient error.
 int accept_tcp(int listen_fd, const std::atomic<bool>& stop);
 
-void tune(int fd, int io_timeout_ms);  // NODELAY, keepalive, TCP_USER_TIMEOUT, buffers, timeouts
+// NODELAY, keep-alive heartbeat (idle/interval/count), TCP_USER_TIMEOUT, buffers, timeouts.
+void tune(int fd, int io_timeout_ms, int keepalive_idle_s = 5, int keepalive_interval_s = 2,
+          int keepalive_count = 3);
 void set_recv_timeout(int fd, int ms);
 
 Err send_all(int fd, const void* p, size_t n, const std::atomic<bool>& abort, bool more = false);

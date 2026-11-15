@@ -153,15 +153,18 @@ void set_recv_timeout(int fd, int ms) {
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
 }
 
-void tune(int fd, int io_timeout_ms) {
+void tune(int fd, int io_timeout_ms, int keepalive_idle_s, int keepalive_interval_s, int keepalive_count) {
   int one = 1;
   setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
   setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof one);
-  int idle = 5, intvl = 2, cnt = 3;
+  int idle = std::max(1, keepalive_idle_s);
+  int intvl = std::max(1, keepalive_interval_s);
+  int cnt = std::max(1, keepalive_count);
   setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof idle);
   setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof intvl);
   setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof cnt);
-  unsigned int uto = static_cast<unsigned int>(io_timeout_ms);
+  // Un-ACKed data on a dead path: give up after 10 s at most, even if the I/O timeout is longer.
+  unsigned int uto = static_cast<unsigned int>(std::min(io_timeout_ms, 10000));
   setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &uto, sizeof uto);
   int buf = 1 << 20;
   setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &buf, sizeof buf);

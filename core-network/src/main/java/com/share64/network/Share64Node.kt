@@ -2,11 +2,15 @@ package com.share64.network
 
 import android.content.Context
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import com.share64.core.TransferEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
@@ -32,7 +36,12 @@ class Share64Node(
     private val preferredPort: Int = TransferEngine.DEFAULT_PORT,
     val identity: DeviceIdentity = DeviceIdentity(context),
 ) : AutoCloseable {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // A failure in a background observer must never take the whole app down.
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default +
+            CoroutineExceptionHandler { _, t -> Log.e(TAG, "background task failed", t) },
+    )
+    private var monitors: List<Job> = emptyList()
     private val closed = AtomicBoolean(false)
 
     val engine = TransferEngine(deviceName = identity.displayName, autoAccept = autoAccept)
@@ -41,6 +50,8 @@ class Share64Node(
     val peers get() = discovery.peers
     val localAddresses get() = discovery.localAddresses
     val discoveryStatus get() = discovery.status
+    /** Which kind of network we are on (home Wi-Fi, hotspot, ...), detected automatically. */
+    val network get() = discovery.profile
     val transfers get() = engine.transfers
     val events get() = engine.events
     val listeningPort get() = engine.listeningPort
@@ -55,11 +66,42 @@ class Share64Node(
             engine.startReceiver(saveDir, 0) // preferred port busy: any free port, advertised via DNS-SD
         }
         discovery.start(port)
+        if (monitors.isEmpty()) monitors = startMonitors()
         return port
     }
 
+    /**
+     * Keeps the native engine in step with what Android says about connectivity:
+     *  - the address list changed  -> tell the engine (it drops dead connections at once, waits
+     *    while offline and reconnects/resumes the moment the net is back);
+     *  - a peer re-appeared under a new address -> running sends switch to it immediately.
+     */
+    private fun startMonitors(): List<Job> = listOf(
+        scope.launch {
+            var previous: List<String>? = null
+            discovery.localAddresses.collect { next ->
+                val action = NetworkPolicy.decide(previous, next)
+                previous = next
+                if (action != null) engine.networkChanged(action.up, action.dropConnections)
+            }
+        },
+        scope.launch {
+            val lastAddress = HashMap<String, Pair<String, Int>>()
+            discovery.peers.collect { list ->
+                for (p in list) {
+                    if (p.manual || PeerRegistry.isScanned(p)) continue
+                    val now = p.host to p.port
+                    val before = lastAddress.put(p.id, now)
+                    if (before != null && before != now) engine.updatePeerAddress(p.id, p.host, p.port)
+                }
+            }
+        },
+    )
+
     @Synchronized
     fun stop() {
+        monitors.forEach { it.cancel() }
+        monitors = emptyList()
         discovery.stop()
         engine.stopReceiver()
     }
@@ -100,6 +142,7 @@ class Share64Node(
 
     fun removePeer(id: String) = discovery.removePeer(id)
 
+    // Closed-safe: the UI may still hold this node for a moment after the service shut it down.
     fun accept(transferId: Long) = engine.accept(transferId)
     fun decline(transferId: Long) = engine.decline(transferId)
     fun cancel(transferId: Long) = engine.cancel(transferId)
@@ -107,9 +150,14 @@ class Share64Node(
 
     override fun close() {
         if (closed.compareAndSet(false, true)) {
+            monitors.forEach { it.cancel() }
             discovery.stop()
             engine.close() // stops the receiver, cancels and joins all native threads
             scope.cancel()
         }
+    }
+
+    private companion object {
+        const val TAG = "SHARE64"
     }
 }

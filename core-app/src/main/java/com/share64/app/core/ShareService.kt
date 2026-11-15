@@ -9,11 +9,14 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
+import android.util.Log
 import com.share64.core.Direction
 import com.share64.core.TransferSnapshot
 import com.share64.core.TransferState
 import com.share64.network.DiscoveryStatus
 import com.share64.network.Share64Node
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -26,13 +29,22 @@ import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Foreground service that owns the [Share64Node]: keeps the receiver reachable, shows progress,
  * asks about incoming files, and exports finished files to Downloads/SHARE64.
  */
 class ShareService : Service() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // A failing background task is logged, never allowed to take the whole app down.
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default +
+            CoroutineExceptionHandler { _, t -> Log.e(TAG, "service task failed", t) },
+    )
+    /** Bumped by every start command; lets a running shutdown notice that it was overtaken. */
+    private val generation = AtomicInteger()
+    /** When each receive-side transfer was interrupted (to stop holding the CPU for ghosts). */
+    private val interruptedAt = ConcurrentHashMap<Long, Long>()
     private lateinit var notifier: ShareNotifications
     private lateinit var settings: AppSettings
     private lateinit var locks: TransferLocks
@@ -47,6 +59,7 @@ class ShareService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        running = true
         notifier = ShareNotifications(this).also { it.ensureChannels() }
         settings = AppSettings(this)
         locks = TransferLocks(this)
@@ -54,28 +67,56 @@ class ShareService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val action = intent?.action
         // Must happen right away whenever we were started with startForegroundService().
-        goForeground(notifier.foreground(deviceNameOrDefault(), "Starting…", null))
-        when (intent?.action) {
+        if (!goForeground(notifier.foreground(deviceNameOrDefault(), "Starting…", null))) {
+            // Android refused (for example a restart from the background on Android 12+): leave cleanly.
+            closeNode()
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (action != ACTION_STOP) generation.incrementAndGet()
+        when (action) {
             ACTION_STOP -> { shutdown(); return START_NOT_STICKY }
             ACTION_ACCEPT -> intent.transferId()?.let { node?.accept(it); notifier.cancel(ShareNotifications.offerId(it)) }
             ACTION_DECLINE -> intent.transferId()?.let { node?.decline(it); notifier.cancel(ShareNotifications.offerId(it)) }
-            ACTION_RESTART -> { restartNode(); return START_NOT_STICKY }
+            ACTION_RESTART -> {
+                if (!settings.sharingEnabled) { shutdown(); return START_NOT_STICKY }
+                restartNode()
+                return stickiness()
+            }
+        }
+        if (!settings.sharingEnabled) {
+            // Sharing was switched off: nothing may keep running.
+            shutdown()
+            return START_NOT_STICKY
         }
         ensureNode()
-        return START_NOT_STICKY
+        return stickiness()
     }
+
+    /**
+     * When the person wants to keep receiving in the background, the system may bring the service
+     * back after it killed the process to free memory (an intent-less restart, handled above).
+     */
+    private fun stickiness(): Int =
+        if (settings.sharingEnabled && settings.receiveInBackground) START_STICKY else START_NOT_STICKY
 
     private fun Intent.transferId(): Long? = getLongExtra(EXTRA_ID, 0L).takeIf { it != 0L }
 
     private fun deviceNameOrDefault(): String = node?.identity?.displayName ?: "SHARE64"
 
-    private fun goForeground(n: Notification) {
+    /** False when the system does not allow this service to run in the foreground right now. */
+    private fun goForeground(n: Notification): Boolean = try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(ShareNotifications.ID_FOREGROUND, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         } else {
             startForeground(ShareNotifications.ID_FOREGROUND, n)
         }
+        true
+    } catch (e: Exception) {
+        Log.w(TAG, "could not start in the foreground", e)
+        false
     }
 
     // ---------------------------------------------------------------- node lifecycle
@@ -114,6 +155,15 @@ class ShareService : Service() {
             n.transfers.collect { onTransfers(n, it) }
         }
         observers += scope.launch {
+            // Timed wake locks are renewed, and locks held for a transfer that never resumed are
+            // released, even when the transfer list itself stays unchanged for a long time.
+            while (true) {
+                delay(LOCK_CHECK_MS)
+                updateLocks()
+                stopIfIdle(n.transfers.value.values)
+            }
+        }
+        observers += scope.launch {
             // Notification refresh is throttled to ~1 Hz; the engine reports progress ~10x per second.
             combine(n.transfers, n.discoveryStatus) { t, s -> t.values to s }.conflate().collect { (t, s) ->
                 refreshForeground(n, t, s)
@@ -131,6 +181,7 @@ class ShareService : Service() {
         locks.set(false)
         runCatching { n?.close() }
         offerShown.clear()
+        interruptedAt.clear()
     }
 
     private fun restartNode() {
@@ -141,8 +192,14 @@ class ShareService : Service() {
     }
 
     private fun shutdown() {
+        val gen = generation.get()
         scope.launch(Dispatchers.IO) {
             closeNode()
+            if (generation.get() != gen) {
+                // Started again while we were closing (the switch was flipped back on): carry on.
+                if (settings.sharingEnabled) ensureNode()
+                return@launch
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
             else @Suppress("DEPRECATION") stopForeground(true)
             stopSelf()
@@ -151,13 +208,27 @@ class ShareService : Service() {
 
     // ---------------------------------------------------------------- reacting to transfers
 
-    private fun isBusy(all: Collection<TransferSnapshot>) = all.any {
-        it.state == TransferState.ACTIVE || it.state == TransferState.RETRYING
+    private fun isBusy(all: Collection<TransferSnapshot>): Boolean {
+        val now = System.currentTimeMillis()
+        return all.any {
+            when (it.state) {
+                TransferState.ACTIVE, TransferState.RETRYING -> true
+                // Waiting for the sender to come back: stay awake for a few minutes, not forever.
+                TransferState.INTERRUPTED -> now - (interruptedAt[it.id] ?: now) < INTERRUPTED_GRACE_MS
+                else -> false
+            }
+        }
+    }
+
+    private fun updateLocks() {
+        locks.set(isBusy(node?.transfers?.value?.values ?: emptyList()))
     }
 
     private fun onTransfers(n: Share64Node, map: Map<Long, TransferSnapshot>) {
         val visible = ShareRuntime.uiVisible.value
         for (s in map.values) {
+            if (s.state == TransferState.INTERRUPTED) interruptedAt.putIfAbsent(s.id, System.currentTimeMillis())
+            else interruptedAt.remove(s.id)
             if (s.state == TransferState.OFFERED) {
                 if (!visible && offerShown.add(s.id)) postOffer(s)
             } else if (offerShown.remove(s.id)) {
@@ -169,7 +240,7 @@ class ShareService : Service() {
                 exportReceived(s)
             }
         }
-        locks.set(isBusy(map.values))
+        updateLocks()
         stopIfIdle(map.values)
     }
 
@@ -218,11 +289,14 @@ class ShareService : Service() {
 
     private fun refreshForeground(n: Share64Node, all: Collection<TransferSnapshot>, status: DiscoveryStatus) {
         val active = all.filter { it.state == TransferState.ACTIVE || it.state == TransferState.RETRYING }
+        val reconnecting = active.count { it.state == TransferState.RETRYING }
         val text = when {
-            active.isNotEmpty() -> "${active.size} transfer${if (active.size == 1) "" else "s"} running"
-            status is DiscoveryStatus.NoNetwork -> "No Wi-Fi network"
-            status is DiscoveryStatus.Error -> "Discovery problem: ${status.message}"
-            status is DiscoveryStatus.Running -> "Ready to receive · ${status.address}"
+            active.isNotEmpty() ->
+                "${active.size} transfer${if (active.size == 1) "" else "s"} " +
+                    if (reconnecting == active.size) "reconnecting" else "running"
+            status is DiscoveryStatus.NoNetwork -> "No Wi-Fi or hotspot connection"
+            status is DiscoveryStatus.Error -> status.message
+            status is DiscoveryStatus.Running -> "Ready to receive · ${status.address} (${status.network.label})"
             else -> "Starting…"
         }
         val total = active.sumOf { it.totalBytes }
@@ -231,6 +305,7 @@ class ShareService : Service() {
     }
 
     override fun onDestroy() {
+        running = false
         closeNode()
         scope.cancel()
         super.onDestroy()
@@ -238,24 +313,44 @@ class ShareService : Service() {
 
     // ---------------------------------------------------------------- keep Wi-Fi fast while transferring
 
+    /**
+     * CPU + Wi-Fi locks held only while a transfer needs them, so a locked screen cannot stall it.
+     * Both are timed, so they can never leak; while busy the CPU lock is renewed long before it ends
+     * (a ten-hour movie never loses it).
+     */
     private class TransferLocks(context: Context) {
         private val wake = (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "share64:transfer").apply { setReferenceCounted(false) }
-        private val wifi = (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager)
-            .createWifiLock(
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) WifiManager.WIFI_MODE_FULL_LOW_LATENCY
-                else @Suppress("DEPRECATION") WifiManager.WIFI_MODE_FULL_HIGH_PERF,
-                "share64:transfer",
-            ).apply { setReferenceCounted(false) }
+        private val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+
+        // Low-latency only applies while the screen is on; the older high-performance mode is what
+        // keeps the radio awake with the screen off on the devices that still honour it.
+        private val wifiLocks: List<WifiManager.WifiLock> = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                add(wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "share64:transfer-ll"))
+            }
+            @Suppress("DEPRECATION")
+            add(wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "share64:transfer-hp"))
+        }.onEach { it.setReferenceCounted(false) }
+
+        private var wakeAcquiredAt = 0L
 
         @Synchronized
         fun set(active: Boolean) {
-            if (active) {
-                if (!wake.isHeld) wake.acquire(4 * 60 * 60 * 1000L)
-                if (!wifi.isHeld) wifi.acquire()
-            } else {
-                if (wake.isHeld) wake.release()
-                if (wifi.isHeld) wifi.release()
+            try {
+                if (active) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (!wake.isHeld || now - wakeAcquiredAt > WAKE_RENEW_MS) {
+                        wake.acquire(WAKE_TIMEOUT_MS)
+                        wakeAcquiredAt = now
+                    }
+                    wifiLocks.forEach { if (!it.isHeld) it.acquire() }
+                } else {
+                    if (wake.isHeld) wake.release()
+                    wifiLocks.forEach { if (it.isHeld) it.release() }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "wake/wifi lock failed", e)
             }
         }
     }
@@ -267,10 +362,37 @@ class ShareService : Service() {
         const val ACTION_RESTART = "com.share64.action.RESTART"
         const val EXTRA_ID = "transfer_id"
 
-        /** Call from a visible Activity (Android 12+ forbids starting foreground services from the background). */
-        fun start(context: Context) = launch(context, null)
-        fun restart(context: Context) = launch(context, ACTION_RESTART)
-        fun stop(context: Context) = launch(context, ACTION_STOP)
+        private const val TAG = "SHARE64"
+        private const val WAKE_TIMEOUT_MS = 30 * 60 * 1000L
+        private const val WAKE_RENEW_MS = 10 * 60 * 1000L
+        private const val LOCK_CHECK_MS = 60 * 1000L
+        private const val INTERRUPTED_GRACE_MS = 5 * 60 * 1000L
+
+        /**
+         * Call from a visible Activity (Android 12+ forbids starting foreground services from the
+         * background). Does nothing while the person has switched sharing off.
+         */
+        fun start(context: Context) {
+            if (AppSettings(context).sharingEnabled) launch(context, null)
+        }
+
+        fun restart(context: Context) {
+            if (AppSettings(context).sharingEnabled) launch(context, ACTION_RESTART)
+        }
+
+        @Volatile private var running = false
+
+        /** True from onCreate to onDestroy of the service in this process. */
+        val isRunning: Boolean get() = running
+
+        /**
+         * Closes sockets, releases wake/Wi-Fi locks and removes the notification. A service that is
+         * not running is not started just to be stopped: if one is still on its way up it notices
+         * the switched-off setting and leaves again by itself.
+         */
+        fun stop(context: Context) {
+            if (running) launch(context, ACTION_STOP)
+        }
 
         private fun launch(context: Context, action: String?) {
             val i = Intent(context, ShareService::class.java).setAction(action)

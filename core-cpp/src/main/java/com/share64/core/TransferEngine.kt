@@ -4,6 +4,7 @@ import android.os.ParcelFileDescriptor
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +30,33 @@ class TransferEngine(
 
     private val closed = AtomicBoolean(false)
 
+    // Every call into native code holds the read lock; close() takes the write lock. So a call can
+    // never reach native memory that close() already freed (the UI may race the service here).
+    private val lifecycle = ReentrantReadWriteLock()
+
+    /** Runs [block] only while the engine is open. Never blocks: a closing engine counts as closed. */
+    private inline fun <T> ifOpen(fallback: T, block: () -> T): T {
+        val read = lifecycle.readLock()
+        if (!read.tryLock()) return fallback
+        try {
+            return if (closed.get()) fallback else block()
+        } finally {
+            read.unlock()
+        }
+    }
+
+    /** Like [ifOpen] but for start/stop calls from background threads: throws once closed. */
+    private inline fun <T> openOrThrow(block: () -> T): T {
+        val read = lifecycle.readLock()
+        read.lock()
+        try {
+            checkOpen()
+            return block()
+        } finally {
+            read.unlock()
+        }
+    }
+
     private val _events = MutableSharedFlow<TransferEvent>(
         replay = 0,
         extraBufferCapacity = 512,
@@ -50,17 +78,15 @@ class TransferEngine(
     }
 
     /** Starts listening. Returns the bound port (pass 0 for an ephemeral one). */
-    fun startReceiver(saveDir: File, port: Int = DEFAULT_PORT): Int {
-        checkOpen()
+    fun startReceiver(saveDir: File, port: Int = DEFAULT_PORT): Int = openOrThrow {
         saveDir.mkdirs()
         val r = nativeStartReceiver(handle, saveDir.absolutePath, port)
         if (r <= 0) throw IOException("Receiver failed to start: ${ErrorCode.from(-r)}")
-        return r
+        r
     }
 
     fun stopReceiver() {
-        checkOpen()
-        nativeStopReceiver(handle)
+        openOrThrow { nativeStopReceiver(handle) }
         _listeningPort.value = 0
     }
 
@@ -75,10 +101,7 @@ class TransferEngine(
         file: File,
         peerKey: String = host,
         displayName: String = file.name,
-    ): Long {
-        checkOpen()
-        return nativeSendFile(handle, host, port, file.absolutePath, displayName, peerKey)
-    }
+    ): Long = ifOpen(0L) { nativeSendFile(handle, host, port, file.absolutePath, displayName, peerKey) }
 
     /** For content:// sources. The engine takes ownership of the descriptor and closes it. */
     fun sendDescriptor(
@@ -88,13 +111,29 @@ class TransferEngine(
         displayName: String,
         peerKey: String = host,
     ): Long {
-        checkOpen()
-        return nativeSendFd(handle, host, port, descriptor.detachFd(), displayName, peerKey)
+        val id = ifOpen(0L) { nativeSendFd(handle, host, port, descriptor.detachFd(), displayName, peerKey) }
+        if (id == 0L && closed.get()) runCatching { descriptor.close() } // engine gone: do not leak the fd
+        return id
     }
 
-    fun accept(transferId: Long) { checkOpen(); nativeRespond(handle, transferId, true) }
-    fun decline(transferId: Long) { checkOpen(); nativeRespond(handle, transferId, false) }
-    fun cancel(transferId: Long) { checkOpen(); nativeCancel(handle, transferId) }
+    // The UI can race a shutting-down service: once the engine is closed these are harmless no-ops.
+    fun accept(transferId: Long) { ifOpen(Unit) { nativeRespond(handle, transferId, true) } }
+    fun decline(transferId: Long) { ifOpen(Unit) { nativeRespond(handle, transferId, false) } }
+    fun cancel(transferId: Long) { ifOpen(Unit) { nativeCancel(handle, transferId) } }
+
+    /**
+     * Tell the engine what Android says about connectivity (see Engine::network_changed).
+     * [up] false: the network is gone, senders wait for it without using up their retries.
+     * [dropConnections] true: live connections are dead (their address vanished): close them now
+     * instead of waiting for the keep-alive; transfers then resume from the last verified chunk.
+     */
+    fun networkChanged(up: Boolean, dropConnections: Boolean) {
+        ifOpen(Unit) { nativeNetworkChanged(handle, up, dropConnections) }
+    }
+
+    /** A peer showed up under a new address: running sends to [peerKey] use it from their next attempt. */
+    fun updatePeerAddress(peerKey: String, host: String, port: Int): Int =
+        ifOpen(0) { nativeUpdatePeer(handle, peerKey, host, port) }
 
     /** Removes a finished transfer from [transfers]. */
     fun dismiss(transferId: Long) {
@@ -105,8 +144,14 @@ class TransferEngine(
     }
 
     override fun close() {
-        if (closed.compareAndSet(false, true)) {
-            nativeDestroy(handle) // cancels and joins every native thread
+        val write = lifecycle.writeLock()
+        write.lock()
+        try {
+            if (closed.compareAndSet(false, true)) {
+                nativeDestroy(handle) // cancels and joins every native thread
+            }
+        } finally {
+            write.unlock()
         }
     }
 
@@ -188,6 +233,8 @@ class TransferEngine(
     private external fun nativeSendFd(handle: Long, host: String, port: Int, fd: Int, name: String, peer: String): Long
     private external fun nativeRespond(handle: Long, id: Long, accept: Boolean)
     private external fun nativeCancel(handle: Long, id: Long)
+    private external fun nativeNetworkChanged(handle: Long, up: Boolean, dropConnections: Boolean)
+    private external fun nativeUpdatePeer(handle: Long, peer: String, host: String, port: Int): Int
 
     companion object {
         const val DEFAULT_PORT = 52364

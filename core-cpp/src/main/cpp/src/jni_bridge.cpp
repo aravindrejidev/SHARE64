@@ -228,4 +228,17 @@ JNIEXPORT void JNICALL Java_com_share64_core_TransferEngine_nativeCancel(JNIEnv*
   if (Handle* h = H(handle)) h->engine->cancel(static_cast<uint64_t>(id));
 }
 
+JNIEXPORT void JNICALL Java_com_share64_core_TransferEngine_nativeNetworkChanged(
+    JNIEnv*, jobject, jlong handle, jboolean up, jboolean drop_connections) {
+  if (Handle* h = H(handle)) h->engine->network_changed(up == JNI_TRUE, drop_connections == JNI_TRUE);
+}
+
+JNIEXPORT jint JNICALL Java_com_share64_core_TransferEngine_nativeUpdatePeer(
+    JNIEnv* env, jobject, jlong handle, jstring peer, jstring host, jint port) {
+  Handle* h = H(handle);
+  if (!h) return 0;
+  return static_cast<jint>(h->engine->update_peer_address(to_utf8(env, peer), to_utf8(env, host),
+                                                          static_cast<uint16_t>(port)));
+}
+
 }  // extern "C"

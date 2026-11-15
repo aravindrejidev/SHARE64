@@ -373,6 +373,16 @@ void Receiver::cancel(uint64_t id) {
   }
 }
 
+void Receiver::drop_sessions(const char* why) {
+  std::lock_guard<std::mutex> g(mu_);
+  for (auto& s : sessions_) {
+    if (!s->finished.load()) {
+      s->ctl.fail(Err::Io, why);  // not a user cancel: the partial stays and the sender resumes
+      s->dcv.notify_all();
+    }
+  }
+}
+
 void Receiver::run_session(Session& s) {
   ServeState st;
   const Err e = serve(s, st);
@@ -399,7 +409,7 @@ Err Receiver::serve(Session& s, ServeState& st) {
   SessionCtl& ctl = s.ctl;
   const std::atomic<bool>& ab = ctl.abort_flag();
   const int fd = s.fd;
-  net::tune(fd, cfg_.io_timeout_ms);
+  net::tune(fd, cfg_.io_timeout_ms, cfg_.keepalive_idle_s, cfg_.keepalive_interval_s, cfg_.keepalive_count);
   ctl.bind(fd, nullptr);
 
   uint8_t cbuf[proto::kMaxControl];

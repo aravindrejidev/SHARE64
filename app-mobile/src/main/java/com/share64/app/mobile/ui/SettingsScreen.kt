@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
@@ -25,6 +26,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,6 +38,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.share64.app.core.AppInfo
+import com.share64.app.core.BatteryOptimization
 import com.share64.app.core.PortRules
 import com.share64.app.core.UpdateManager
 import com.share64.app.core.UpdateState
@@ -60,6 +63,14 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit, onOpenAbout: () -> Uni
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) vm.setDownloadFolder(uri)
     }
+
+    // Battery optimisation can pause a locked phone's transfers; re-read the state when the
+    // system screen closes again.
+    var batteryRefresh by remember { mutableIntStateOf(0) }
+    val batteryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        batteryRefresh++
+    }
+    val batteryAllowed = remember(batteryRefresh) { BatteryOptimization.isIgnoring(context) }
 
     Scaffold { padding ->
         LazyColumn(
@@ -125,6 +136,31 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit, onOpenAbout: () -> Uni
                     title = "Your address",
                     subtitle = if (ui.addresses.isEmpty()) "Not connected to a network"
                     else ui.addresses.joinToString("\n") { if (ui.port > 0) "$it:${ui.port}" else it },
+                )
+            }
+
+            // ---- Reliability --------------------------------------------------------
+            item { SectionLabel("Reliability") }
+            item {
+                SettingRow(
+                    index = 0, count = 1, accent = 2,
+                    icon = Icons.Default.CheckCircle,
+                    title = "Keep running with the screen off",
+                    subtitle = if (batteryAllowed) {
+                        "Allowed. Android won't pause SHARE64 while the phone is locked."
+                    } else {
+                        "Recommended: stops Android from pausing big transfers when the screen turns off."
+                    },
+                    onClick = {
+                        try {
+                            batteryLauncher.launch(
+                                if (batteryAllowed) BatteryOptimization.settingsIntent()
+                                else BatteryOptimization.requestIntent(context),
+                            )
+                        } catch (_: Exception) {
+                            runCatching { batteryLauncher.launch(BatteryOptimization.settingsIntent()) }
+                        }
+                    },
                 )
             }
 

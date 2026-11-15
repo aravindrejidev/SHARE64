@@ -57,6 +57,30 @@ class TransferPresenterTest {
         assertEquals("Connection lost — waiting for the sender", intr.status)
     }
 
+    @Test fun networkLossIsExplainedInPlainWords() {
+        val retry = TransferPresenter.present(
+            snap(state = TransferState.RETRYING, verified = 4L * 1024 * 1024, attempt = 2, message = "network lost"), false, en,
+        )
+        assertEquals("Waiting for the network…", retry.status)
+        assertEquals("Resuming from 4.00 MB", retry.detail)
+        val intr = TransferPresenter.present(
+            snap(dir = Direction.RECEIVE, state = TransferState.INTERRUPTED, verified = 2L * 1024 * 1024, message = "network lost"), false, en,
+        )
+        assertEquals("Network lost — waiting for the sender", intr.status)
+        // any other reason keeps the generic wording
+        val other = TransferPresenter.present(snap(state = TransferState.RETRYING, attempt = 2, message = "connect failed"), false, en)
+        assertEquals("Connection lost — reconnecting", other.status)
+    }
+
+    @Test fun givingUpWhileOfflineSaysSoAndHowToContinue() {
+        val failed = TransferPresenter.present(
+            snap(state = TransferState.FAILED, error = ErrorCode.TIMEOUT, message = "network unavailable"), false, en,
+        )
+        assertTrue(failed.status.startsWith("No network for too long"))
+        val plain = TransferPresenter.present(snap(state = TransferState.FAILED, error = ErrorCode.TIMEOUT), false, en)
+        assertEquals("The other device stopped responding", plain.status)
+    }
+
     @Test fun offerCannotBeCancelledOnlyAnswered() {
         val o = TransferPresenter.present(snap(dir = Direction.RECEIVE, state = TransferState.OFFERED), false, en)
         assertFalse(o.canCancel)

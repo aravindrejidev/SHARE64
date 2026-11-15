@@ -31,6 +31,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -41,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -147,48 +149,74 @@ private fun OnlinePill(online: Boolean, palette: CardPalette) {
 // Status hero
 // ---------------------------------------------------------------------------------------------
 
-/** The big card at the top of Home: pulsing cookie, device name, address. Turns red on problems. */
+/**
+ * The big card at the top of Home: pulsing cookie, device name, address, the kind of network that
+ * was detected, and the master switch for the engine. Red on problems, calm grey when sharing is off.
+ */
 @Composable
-fun StatusHero(state: MainUiState, modifier: Modifier = Modifier) {
+fun StatusHero(state: MainUiState, onSharingChange: (Boolean) -> Unit, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
     val status = state.status
-    val problem = status is DiscoveryStatus.NoNetwork || status is DiscoveryStatus.Error
-    val running = status is DiscoveryStatus.Running
+    val off = !state.sharingEnabled
+    val problem = !off && (status is DiscoveryStatus.NoNetwork || status is DiscoveryStatus.Error)
+    val running = !off && status is DiscoveryStatus.Running
 
     val label: String
     val title: String
     val detail: String?
-    when (status) {
-        is DiscoveryStatus.NoNetwork -> {
-            label = "OFFLINE"
-            title = "No Wi-Fi network"
-            detail = "Connect to the same Wi-Fi as the other device."
-        }
-        is DiscoveryStatus.Error -> {
-            label = "PROBLEM"
-            title = "Discovery problem"
-            detail = "${status.message}. Retrying…"
-        }
-        is DiscoveryStatus.Running -> {
-            label = "VISIBLE AS"
-            title = state.deviceName.ifBlank { "This device" }
-            detail = status.address + if (state.port > 0) ":${state.port}" else ""
-        }
-        is DiscoveryStatus.Stopped -> {
-            label = "STARTING"
-            title = "Starting SHARE64…"
-            detail = null
+    if (off) {
+        label = "SHARING IS OFF"
+        title = "Not visible to anyone"
+        detail = "Turn sharing on to send and receive files."
+    } else {
+        when (status) {
+            is DiscoveryStatus.NoNetwork -> {
+                label = "OFFLINE"
+                title = "No Wi-Fi or hotspot"
+                detail = "Join the same Wi-Fi as the other device, or turn on a hotspot on one phone and connect the other to it."
+            }
+            is DiscoveryStatus.Error -> {
+                label = "PROBLEM"
+                title = "Discovery problem"
+                detail = "${status.message}. Retrying…"
+            }
+            is DiscoveryStatus.Running -> {
+                label = "VISIBLE AS · ${status.network.label.uppercase()}"
+                title = state.deviceName.ifBlank { "This device" }
+                detail = status.address + if (state.port > 0) ":${state.port}" else ""
+            }
+            is DiscoveryStatus.Stopped -> {
+                label = "STARTING"
+                title = "Starting SHARE64…"
+                detail = null
+            }
         }
     }
 
     val container by animateColorAsState(
-        targetValue = if (problem) scheme.errorContainer else scheme.primaryContainer,
+        targetValue = when {
+            off -> scheme.surfaceContainerHigh
+            problem -> scheme.errorContainer
+            else -> scheme.primaryContainer
+        },
         animationSpec = tween(450),
         label = "heroContainer",
     )
-    val onContainer = if (problem) scheme.onErrorContainer else scheme.onPrimaryContainer
-    val accent = if (problem) scheme.error else scheme.primary
-    val onAccent = if (problem) scheme.onError else scheme.onPrimary
+    val onContainer = when {
+        off -> scheme.onSurface
+        problem -> scheme.onErrorContainer
+        else -> scheme.onPrimaryContainer
+    }
+    val accent = when {
+        off -> scheme.outline
+        problem -> scheme.error
+        else -> scheme.primary
+    }
+    val onAccent = when {
+        off -> scheme.surface
+        problem -> scheme.onError
+        else -> scheme.onPrimary
+    }
 
     val spin = rememberInfiniteTransition(label = "heroBackdrop").animateFloat(
         initialValue = 0f,
@@ -216,14 +244,14 @@ fun StatusHero(state: MainUiState, modifier: Modifier = Modifier) {
                 )
                 drawPath(path, accent.copy(alpha = 0.10f))
             }
+            Column(modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 24.dp, bottom = 16.dp)) {
             Row(
-                modifier = Modifier.padding(horizontal = 22.dp, vertical = 24.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
             ) {
                 Box(modifier = Modifier.size(96.dp), contentAlignment = Alignment.Center) {
                     if (running) PulseRings(color = accent)
-                    CookieBadge(size = 72.dp, color = accent, lobes = 9, amplitude = 0.09f, spin = !problem) {
+                    CookieBadge(size = 72.dp, color = accent, lobes = 9, amplitude = 0.09f, spin = !problem && !off) {
                         Icon(
                             imageVector = if (problem) Icons.Default.Warning else ShareIcons.Wifi,
                             contentDescription = null,
@@ -252,6 +280,36 @@ fun StatusHero(state: MainUiState, modifier: Modifier = Modifier) {
                     }
                 }
             }
+            Spacer(Modifier.height(16.dp))
+            SharingSwitchRow(checked = state.sharingEnabled, tint = onContainer, onChange = onSharingChange)
+            }
+        }
+    }
+}
+
+/** The master switch: starts or stops the transfer engine and the background service. */
+@Composable
+private fun SharingSwitchRow(checked: Boolean, tint: Color, onChange: (Boolean) -> Unit) {
+    Surface(
+        onClick = { onChange(!checked) },
+        shape = RoundedCornerShape(28.dp),
+        color = tint.copy(alpha = 0.10f),
+        contentColor = tint,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 20.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(if (checked) "Sharing is on" else "Sharing is off", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (checked) "Ready to send and receive" else "Engine and background service are stopped",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tint.copy(alpha = 0.75f),
+                )
+            }
+            Switch(checked = checked, onCheckedChange = null)
         }
     }
 }
@@ -298,7 +356,7 @@ fun DeviceCard(peer: PeerDevice, onClick: () -> Unit, modifier: Modifier = Modif
 
 /** Radar-style empty state: rings ping outward while SHARE64 is searching. */
 @Composable
-fun EmptyDevices(searching: Boolean, modifier: Modifier = Modifier) {
+fun EmptyDevices(searching: Boolean, modifier: Modifier = Modifier, sharingOff: Boolean = false) {
     val scheme = MaterialTheme.colorScheme
     BouncyCard(
         onClick = null,
@@ -313,8 +371,8 @@ fun EmptyDevices(searching: Boolean, modifier: Modifier = Modifier) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Box(modifier = Modifier.size(132.dp), contentAlignment = Alignment.Center) {
-                if (searching) PulseRings(color = scheme.primary)
-                CookieBadge(size = 76.dp, color = scheme.tertiaryContainer, lobes = 10, amplitude = 0.07f, spin = true) {
+                if (searching && !sharingOff) PulseRings(color = scheme.primary)
+                CookieBadge(size = 76.dp, color = scheme.tertiaryContainer, lobes = 10, amplitude = 0.07f, spin = !sharingOff) {
                     Icon(
                         ShareIcons.Wifi,
                         contentDescription = null,
@@ -324,12 +382,20 @@ fun EmptyDevices(searching: Boolean, modifier: Modifier = Modifier) {
                 }
             }
             Text(
-                text = if (searching) "Looking for devices…" else "No devices yet",
+                text = when {
+                    sharingOff -> "Sharing is off"
+                    searching -> "Looking for devices…"
+                    else -> "No devices yet"
+                },
                 style = MaterialTheme.typography.headlineSmall,
             )
             Text(
-                text = "Open SHARE64 on the other device and connect both to the same Wi-Fi. " +
-                    "If nothing shows up, use “Add by address”.",
+                text = if (sharingOff) {
+                    "Turn sharing on above to find nearby devices and to receive files."
+                } else {
+                    "Open SHARE64 on the other device and connect both to the same Wi-Fi, or to one phone's hotspot. " +
+                        "If nothing shows up, use “Add by address”."
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = scheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
