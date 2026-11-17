@@ -30,7 +30,6 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -57,11 +56,10 @@ import com.share64.network.DiscoveryStatus
  * cards that spring in, wavy-progress transfer cards and a FAB menu with bouncy motion.
  */
 @Composable
-fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
+fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit, onOpenConnect: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
-    var showManual by remember { mutableStateOf(false) }
     var fabExpanded by remember { mutableStateOf(false) }
     var confirmStop by remember { mutableStateOf(false) }
     val scheme = MaterialTheme.colorScheme
@@ -132,8 +130,8 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
                     SectionHeader(
                         "Nearby",
                         count = state.peers.size,
-                        actionLabel = if (state.sharingEnabled) "Add by address" else null,
-                        onAction = { showManual = true },
+                        actionLabel = if (state.sharingEnabled) "Connect with QR" else null,
+                        onAction = onOpenConnect,
                     )
                 }
                 if (!state.sharingEnabled || state.peers.isEmpty()) {
@@ -197,7 +195,7 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
                         vm.chooseTarget(null)
                         picker.launch(arrayOf("*/*"))
                     },
-                    FabAction("Add by address", Icons.Default.Search) { showManual = true },
+                    FabAction("Connect with QR", ShareIcons.QrCode) { onOpenConnect() },
                 ),
                 modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp),
             )
@@ -235,18 +233,8 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit) {
             files = state.pendingFiles,
             peers = state.peers,
             onPick = { vm.sendPendingTo(it) },
-            onManual = { showManual = true },
+            onManual = onOpenConnect,
             onDismiss = { vm.clearPending() },
-        )
-    }
-
-    if (showManual) {
-        ManualConnectDialog(
-            onConnect = {
-                vm.connectManually(it)
-                showManual = false
-            },
-            onDismiss = { showManual = false },
         )
     }
 

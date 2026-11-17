@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "../main/cpp/src/net.h"
+#include "../main/cpp/src/protocol.h"
 #include "share64/engine.h"
 #include "share64/sha256.h"
 
@@ -592,6 +593,28 @@ static void test_peer_address_update() {
   CHECK(files_equal(src, rc.name), "FILE CONTENT DIFFERS after address switch");
 }
 
+static void test_peer_seen_event() {
+  std::printf("[discovery] a hello from an unknown device is reported (name = IPv4, message = device name)\n");
+  Rig r;
+  Err e = Err::Ok;
+  std::atomic<bool> never{false};
+  const int fd = net::connect_tcp("127.0.0.1", r.port, 2000, never, e);
+  CHECK(fd >= 0, "connect");
+  proto::Hello hello;
+  hello.device = "Scanner Phone";
+  CHECK(proto::send_hello(fd, proto::Msg::Hello, hello, never) == Err::Ok, "send hello");
+  proto::Header h;
+  uint8_t buf[proto::kMaxControl];
+  std::string fm;
+  CHECK(proto::read_expect(fd, proto::Msg::HelloAck, h, buf, sizeof buf, never, &fm) == Err::Ok, "hello ack");
+  Event ev;
+  CHECK(r.rs.wait(EventKind::PeerSeen, 3000, &ev), "no PeerSeen event");
+  CHECK(ev.name == "127.0.0.1", "ip '%s'", ev.name.c_str());
+  CHECK(ev.message == "Scanner Phone", "device '%s'", ev.message.c_str());
+  CHECK(ev.transfer_id == 0, "must not look like a transfer");
+  ::close(fd);
+}
+
 int main() {
   test_sha();
   test_basic_sizes();
@@ -604,6 +627,7 @@ int main() {
   test_offline_patience();
   test_offline_patience_expires();
   test_peer_address_update();
+  test_peer_seen_event();
   std::printf(g_fail ? "\n%d CHECK(S) FAILED\n" : "\nALL PASSED\n", g_fail);
   return g_fail ? 1 : 0;
 }

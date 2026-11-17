@@ -394,7 +394,7 @@ fun EmptyDevices(searching: Boolean, modifier: Modifier = Modifier, sharingOff: 
                     "Turn sharing on above to find nearby devices and to receive files."
                 } else {
                     "Open SHARE64 on the other device and connect both to the same Wi-Fi, or to one phone's hotspot. " +
-                        "If nothing shows up, use “Add by address”."
+                        "If nothing shows up, tap “Connect with QR”."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = scheme.onSurfaceVariant,

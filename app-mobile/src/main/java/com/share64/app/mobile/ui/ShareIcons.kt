@@ -77,6 +77,23 @@ object ShareIcons {
         icon("Upload", "M9,16h6v-6h4l-7,-7 -7,7h4zM5,18h14v2H5z")
     }
 
+    /** Three finder squares and a few data dots: the universal "QR code" glyph. */
+    val QrCode: ImageVector by lazy {
+        icon(
+            "QrCode",
+            // top-left, top-right, bottom-left finder: ring (clockwise outer, counter-clockwise hole) + centre dot
+            "M3,3h8v8h-8z M5,5v4h4v-4z M6,6h2v2h-2z " +
+                "M13,3h8v8h-8z M15,5v4h4v-4z M16,6h2v2h-2z " +
+                "M3,13h8v8h-8z M5,15v4h4v-4z M6,16h2v2h-2z " +
+                // data dots
+                "M13,13h2v2h-2z M17,13h2v2h-2z M15,15h2v2h-2z M19,15h2v2h-2z " +
+                "M13,17h2v2h-2z M17,17h2v2h-2z M15,19h2v2h-2z M19,19h2v2h-2z",
+        )
+    }
+    val Flash: ImageVector by lazy {
+        icon("Flash", "M7,2v11h3v9l7,-12h-4l4,-8z")
+    }
+
     private fun icon(name: String, pathData: String): ImageVector {
         val builder = ImageVector.Builder(
             name = name,

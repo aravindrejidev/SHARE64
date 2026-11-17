@@ -27,7 +27,8 @@ enum class EventKind : int {
   Cancelled = 5,      // terminal cancel
   IncomingOffer = 6,  // receiver: waiting for accept/decline. name = file, message = sender device
   Listening = 7,      // receiver is listening (done = port)
-  Interrupted = 8     // receiver: link lost, partial data kept for resume
+  Interrupted = 8,    // receiver: link lost, partial data kept for resume
+  PeerSeen = 9        // receiver: a device just said hello. name = its IPv4 address, message = its device name
 };
 
 enum class Err : int {

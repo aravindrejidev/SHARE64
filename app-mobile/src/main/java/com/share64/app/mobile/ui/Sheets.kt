@@ -90,7 +90,7 @@ fun SendSheet(
             }
             Spacer(Modifier.height(14.dp))
             ExpressiveButton(onClick = onManual, kind = ButtonKind.Tonal, modifier = Modifier.align(Alignment.End)) {
-                Text("Add by address")
+                Text("Connect with QR")
             }
         }
     }

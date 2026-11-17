@@ -432,6 +432,17 @@ Err Receiver::serve(Session& s, ServeState& st) {
   mine.device = cfg_.device_name;
   if ((e = proto::send_hello(fd, proto::Msg::HelloAck, mine, ab)) != Err::Ok) return bail(e);
 
+  {
+    // Tell the host app who is knocking, so it can add (and reverse-probe) devices it has not met:
+    // a phone that just scanned our QR code becomes visible to us without a second scan.
+    const std::string ip = net::peer_ipv4(fd);
+    if (!ip.empty()) {
+      Event seen = make_event(EventKind::PeerSeen, 0, Direction::Receive, ip, 0);
+      seen.message = hello.device;
+      emit(seen);
+    }
+  }
+
   e = proto::read_expect(fd, proto::Msg::Offer, h, cbuf, sizeof cbuf, ab, &fm);
   if (e != Err::Ok) return bail(e);
   proto::Offer off;

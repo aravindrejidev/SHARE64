@@ -18,9 +18,13 @@ import com.share64.app.core.TransferItem
 import com.share64.app.core.TransferPresenter
 import com.share64.core.TransferSnapshot
 import com.share64.core.TransferState
+import com.share64.network.ConnectInfo
 import com.share64.network.DeviceIdentity
 import com.share64.network.DiscoveryStatus
 import com.share64.network.PeerDevice
+import com.share64.network.QrConnectResult
+import com.share64.network.QrParse
+import com.share64.network.QrPayload
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -52,7 +56,17 @@ data class MainUiState(
     val sharingEnabled: Boolean = true,
     /** Transfers that are moving (or reconnecting) right now. */
     val activeTransfers: Int = 0,
+    /** The text of this device's QR code; null while it cannot be reached (no network, sharing off). */
+    val qrPayload: String? = null,
 )
+
+/** Where a QR scan stands. */
+sealed interface QrUiState {
+    data object Idle : QrUiState
+    data object Connecting : QrUiState
+    data class Connected(val peer: PeerDevice) : QrUiState
+    data class Failed(val title: String, val detail: String) : QrUiState
+}
 
 data class SettingsState(
     val deviceName: String,
@@ -131,6 +145,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             },
             offer = offer?.let { IncomingOffer(it.id, it.name, it.peerName ?: "another device", Formatting.bytes(it.totalBytes)) },
             pendingFiles = files,
+            qrPayload = qrPayloadFor(node),
             sharingEnabled = sharingOn,
             activeTransfers = ordered.count { it.state == TransferState.ACTIVE || it.state == TransferState.RETRYING },
         )
@@ -213,6 +228,53 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun postMessage(text: String) { _messages.trySend(text) }
+
+    // ---------------------------------------------------------------- QR pairing
+
+    private val _qr = MutableStateFlow<QrUiState>(QrUiState.Idle)
+    val qr: StateFlow<QrUiState> = _qr.asStateFlow()
+
+    private fun qrPayloadFor(node: NodeSnapshot): String? {
+        if (!node.ready || node.port <= 0 || node.addresses.isEmpty()) return null
+        val me = identity.local()
+        return QrPayload.encode(ConnectInfo(me.id, node.deviceName.ifEmpty { me.displayName }, me.type, node.port, node.addresses))
+    }
+
+    /** A code came out of the camera. Only the first one counts until the result is dealt with. */
+    fun onQrScanned(text: String) {
+        if (_qr.value != QrUiState.Idle) return
+        _qr.value = QrUiState.Connecting
+        viewModelScope.launch {
+            val node = ShareRuntime.node.value
+            _qr.value = if (node == null) {
+                if (settings.sharingEnabled) QrUiState.Failed("Still starting", "SHARE64 is getting ready. Try again in a moment.")
+                else QrUiState.Failed("Sharing is off", "Turn sharing on, then scan again.")
+            } else {
+                when (val r = node.connectFromQr(text)) {
+                    is QrConnectResult.Connected -> QrUiState.Connected(r.peer)
+                    is QrConnectResult.Unreachable -> QrUiState.Failed(
+                        "Couldn't reach ${r.info.name}",
+                        "Both devices must be on the same Wi-Fi, or one on the other's hotspot. Then try again.",
+                    )
+                    is QrConnectResult.Incompatible -> QrUiState.Failed(
+                        "Different SHARE64 version",
+                        "${r.info.name} runs a version that can't talk to this one. Update both apps.",
+                    )
+                    is QrConnectResult.OwnCode -> QrUiState.Failed("That's this phone's code", "Scan the code shown on the other device.")
+                    is QrConnectResult.Invalid -> when (r.reason) {
+                        QrParse.Reason.NOT_SHARE64 -> QrUiState.Failed("Not a SHARE64 code", "Scan the code shown in SHARE64 on the other device.")
+                        QrParse.Reason.NEWER_VERSION -> QrUiState.Failed("Newer SHARE64 code", "Update SHARE64 on this phone, then scan again.")
+                        else -> QrUiState.Failed("Damaged code", "Ask the other device to show its code again.")
+                    }
+                }
+            }
+        }
+    }
+
+    /** Back to scanning (after a failure, or when leaving the screen). */
+    fun resetQr() {
+        _qr.value = QrUiState.Idle
+    }
 
     // ---------------------------------------------------------------- master switch
 

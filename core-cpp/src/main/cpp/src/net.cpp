@@ -146,6 +146,27 @@ int accept_tcp(int listen_fd, const std::atomic<bool>& stop) {
   return -1;
 }
 
+std::string peer_ipv4(int fd) {
+  sockaddr_storage ss;
+  socklen_t len = sizeof ss;
+  if (getpeername(fd, reinterpret_cast<sockaddr*>(&ss), &len) != 0) return std::string();
+  char buf[INET_ADDRSTRLEN] = {0};
+  if (ss.ss_family == AF_INET) {
+    const auto* a = reinterpret_cast<const sockaddr_in*>(&ss);
+    if (!inet_ntop(AF_INET, &a->sin_addr, buf, sizeof buf)) return std::string();
+    return buf;
+  }
+  if (ss.ss_family == AF_INET6) {  // the listener is dual-stack: IPv4 peers show up v4-mapped
+    const auto* a = reinterpret_cast<const sockaddr_in6*>(&ss);
+    if (!IN6_IS_ADDR_V4MAPPED(&a->sin6_addr)) return std::string();
+    in_addr v4;
+    std::memcpy(&v4, &a->sin6_addr.s6_addr[12], sizeof v4);
+    if (!inet_ntop(AF_INET, &v4, buf, sizeof buf)) return std::string();
+    return buf;
+  }
+  return std::string();
+}
+
 void set_recv_timeout(int fd, int ms) {
   timeval tv;
   tv.tv_sec = ms / 1000;

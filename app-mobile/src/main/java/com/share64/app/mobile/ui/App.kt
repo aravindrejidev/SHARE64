@@ -3,11 +3,17 @@ package com.share64.app.mobile.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -22,19 +28,31 @@ import com.share64.app.core.UpdateManager
 import com.share64.app.core.isActionable
 import com.share64.app.mobile.MainViewModel
 
-private enum class Screen { Home, Settings, About }
+private enum class Screen(val depth: Int) { Home(0), Settings(1), About(2), Connect(1) }
 
-/** Home -> Settings -> About, with a slide in the direction of travel; system Back goes one level up. */
+/**
+ * Home -> Settings -> About slide in the direction of travel; the QR "Connect" screen rises from the
+ * bottom like a sheet. System Back goes one level up.
+ */
 @Composable
 fun Share64App(vm: MainViewModel) {
     val context = LocalContext.current
-    var level by rememberSaveable { mutableStateOf(0) }
-    val screen = Screen.entries[level.coerceIn(0, Screen.entries.size - 1)]
-    BackHandler(enabled = level > 0) { level -= 1 }
+    var route by rememberSaveable { mutableStateOf(Screen.Home.name) }
+    val screen = Screen.entries.firstOrNull { it.name == route } ?: Screen.Home
+    fun go(to: Screen) { route = to.name }
+    BackHandler(enabled = screen != Screen.Home) {
+        go(if (screen == Screen.About) Screen.Settings else Screen.Home)
+    }
     AnimatedContent(
         targetState = screen,
         transitionSpec = {
-            if (targetState.ordinal > initialState.ordinal) {
+            if (targetState == Screen.Connect) {
+                (slideInVertically(spring(0.85f, Spring.StiffnessMediumLow)) { it / 5 } + fadeIn(tween(240)) + scaleIn(tween(300), initialScale = 0.96f)) togetherWith
+                    fadeOut(tween(160))
+            } else if (initialState == Screen.Connect) {
+                fadeIn(tween(240)) togetherWith
+                    (slideOutVertically(tween(280, easing = FastOutSlowInEasing)) { it / 5 } + fadeOut(tween(200)) + scaleOut(tween(280), targetScale = 0.96f))
+            } else if (targetState.depth > initialState.depth) {
                 (slideInHorizontally(tween(320, easing = FastOutSlowInEasing)) { it / 3 } + fadeIn(tween(240))) togetherWith
                     fadeOut(tween(160))
             } else {
@@ -45,9 +63,10 @@ fun Share64App(vm: MainViewModel) {
         label = "screen",
     ) { current ->
         when (current) {
-            Screen.Home -> HomeScreen(vm = vm, onOpenSettings = { level = 1 })
-            Screen.Settings -> SettingsScreen(vm = vm, onBack = { level = 0 }, onOpenAbout = { level = 2 })
-            Screen.About -> AboutScreen(onBack = { level = 1 })
+            Screen.Home -> HomeScreen(vm = vm, onOpenSettings = { go(Screen.Settings) }, onOpenConnect = { go(Screen.Connect) })
+            Screen.Settings -> SettingsScreen(vm = vm, onBack = { go(Screen.Home) }, onOpenAbout = { go(Screen.About) })
+            Screen.About -> AboutScreen(onBack = { go(Screen.Settings) })
+            Screen.Connect -> ConnectScreen(vm = vm, onBack = { go(Screen.Home) })
         }
     }
 

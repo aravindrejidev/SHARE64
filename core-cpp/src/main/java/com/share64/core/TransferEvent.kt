@@ -3,8 +3,14 @@ package com.share64.core
 enum class Direction { SEND, RECEIVE }
 
 enum class EventKind {
-    STARTED, PROGRESS, RETRYING, COMPLETED, FAILED, CANCELLED, INCOMING_OFFER, LISTENING, INTERRUPTED
+    STARTED, PROGRESS, RETRYING, COMPLETED, FAILED, CANCELLED, INCOMING_OFFER, LISTENING, INTERRUPTED,
+
+    /** A device said hello to our receiver. [TransferEvent.name] = its IPv4 address, [TransferEvent.message] = its name. */
+    PEER_SEEN
 }
+
+/** A device that just contacted our receiver (a QR scan, a probe, a transfer), seen from its IP. */
+data class SeenPeer(val ip: String, val name: String)
 
 enum class ErrorCode(val code: Int) {
     OK(0), IO(1), PROTOCOL(2), HASH_MISMATCH(3), REJECTED(4), CANCELLED(5), DISK_FULL(6),

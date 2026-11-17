@@ -20,6 +20,8 @@ int accept_tcp(int listen_fd, const std::atomic<bool>& stop);
 void tune(int fd, int io_timeout_ms, int keepalive_idle_s = 5, int keepalive_interval_s = 2,
           int keepalive_count = 3);
 void set_recv_timeout(int fd, int ms);
+// Dotted IPv4 address of the other end ("" for anything that is not IPv4 / on error).
+std::string peer_ipv4(int fd);
 
 Err send_all(int fd, const void* p, size_t n, const std::atomic<bool>& abort, bool more = false);
 Err recv_all(int fd, void* p, size_t n, const std::atomic<bool>& abort);

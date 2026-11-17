@@ -12,6 +12,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -96,7 +97,75 @@ class Share64Node(
                 }
             }
         },
+        scope.launch { learnAboutVisitors() },
     )
+
+    /**
+     * Somebody said hello to our receiver (they scanned our QR code, probed us, sent a file). If we do
+     * not know them yet, knock back on their default port: a QR scan then makes both devices see each
+     * other, and discovery that only works in one direction heals itself.
+     */
+    private suspend fun learnAboutVisitors() {
+        val lastTry = HashMap<String, Long>()
+        engine.peerSeen.collect { seen ->
+            val ip = seen.ip
+            if (!QrPayload.isPrivateIpv4(ip)) return@collect
+            if (ip in discovery.localAddresses.value) return@collect
+            if (discovery.peers.value.any { it.host == ip }) return@collect
+            val now = System.currentTimeMillis()
+            if (now - (lastTry[ip] ?: 0L) < VISITOR_COOLDOWN_MS) return@collect
+            lastTry[ip] = now
+            withContext(Dispatchers.IO) {
+                val port = TransferEngine.DEFAULT_PORT
+                val reply = HandshakeProbe.query(ip, port, 1_500, identity.displayName)
+                if (reply != null && reply.protocolVersion == PeerTxt.PROTOCOL_VERSION) {
+                    discovery.addSeenPeer(ip, port, reply.deviceName.ifBlank { seen.name }, reply.protocolVersion)
+                }
+            }
+        }
+    }
+
+    /** What the other device needs to connect to us (the content of our QR code); null while we are not reachable. */
+    fun connectInfo(): ConnectInfo? {
+        val port = listeningPort.value
+        val addresses = localAddresses.value
+        if (port <= 0 || addresses.isEmpty()) return null
+        val me = identity.local()
+        return ConnectInfo(me.id, me.displayName, me.type, port, addresses)
+    }
+
+    /**
+     * Connects to the device whose QR code was scanned: tries every address in the code at once, keeps the
+     * one that answers, and adds the device under its real id (so resume survives address changes).
+     * Our own handshake also tells the other side about us, so it adds us back by itself.
+     */
+    suspend fun connectFromQr(text: String): QrConnectResult = withContext(Dispatchers.IO) {
+        val info = when (val parsed = QrPayload.parse(text)) {
+            is QrParse.Invalid -> return@withContext QrConnectResult.Invalid(parsed.reason)
+            is QrParse.Ok -> parsed.info
+        }
+        if (info.id == identity.local().id) return@withContext QrConnectResult.OwnCode
+        val reached = QrConnector.firstReachable(info.addresses) { host ->
+            HandshakeProbe.query(host, info.port, QR_PROBE_TIMEOUT_MS, identity.displayName)
+        } ?: return@withContext QrConnectResult.Unreachable(info)
+        if (reached.reply.protocolVersion != PeerTxt.PROTOCOL_VERSION) {
+            return@withContext QrConnectResult.Incompatible(info, reached.reply.protocolVersion)
+        }
+        val peer = PeerDevice(
+            id = info.id,
+            serviceName = "",
+            displayName = info.name.ifBlank { reached.reply.deviceName.ifBlank { reached.host } },
+            type = info.type,
+            host = reached.host,
+            port = info.port,
+            protocolVersion = reached.reply.protocolVersion,
+            reachable = true,
+            lastSeenMs = System.currentTimeMillis(),
+            manual = true,
+        )
+        discovery.addManualPeer(peer)
+        QrConnectResult.Connected(peer)
+    }
 
     @Synchronized
     fun stop() {
@@ -159,5 +228,7 @@ class Share64Node(
 
     private companion object {
         const val TAG = "SHARE64"
+        const val VISITOR_COOLDOWN_MS = 30_000L
+        const val QR_PROBE_TIMEOUT_MS = 2_500
     }
 }

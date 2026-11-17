@@ -15,9 +15,11 @@ import com.share64.app.core.TransferItem
 import com.share64.app.core.TransferPresenter
 import com.share64.core.TransferSnapshot
 import com.share64.core.TransferState
+import com.share64.network.ConnectInfo
 import com.share64.network.DeviceIdentity
 import com.share64.network.DiscoveryStatus
 import com.share64.network.PeerDevice
+import com.share64.network.QrPayload
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -45,6 +47,8 @@ data class TvUiState(
     val incoming: List<TransferItem> = emptyList(),
     val outgoing: List<TransferItem> = emptyList(),
     val offer: TvOffer? = null,
+    /** Text of this TV's QR code (a phone scans it); null while the TV cannot be reached. */
+    val qrPayload: String? = null,
 )
 
 data class TvSettings(
@@ -108,8 +112,15 @@ class TvViewModel(app: Application) : AndroidViewModel(app) {
             incoming = items.filter { !it.isSend },
             outgoing = items.filter { it.isSend },
             offer = offer?.let { TvOffer(it.id, it.name, it.peerName ?: "another device", Formatting.bytes(it.totalBytes)) },
+            qrPayload = qrPayloadFor(node),
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TvUiState(deviceName = identity.displayName))
+
+    private fun qrPayloadFor(node: NodeSnapshot): String? {
+        if (!node.ready || node.port <= 0 || node.addresses.isEmpty()) return null
+        val me = identity.local()
+        return QrPayload.encode(ConnectInfo(me.id, node.deviceName.ifEmpty { me.displayName }, me.type, node.port, node.addresses))
+    }
 
     // ---------------------------------------------------------------- sending
 

@@ -64,6 +64,15 @@ class TransferEngine(
     )
     val events: SharedFlow<TransferEvent> = _events.asSharedFlow()
 
+    private val _peerSeen = MutableSharedFlow<SeenPeer>(
+        replay = 0,
+        extraBufferCapacity = 32,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /** Devices that contact our receiver: used to add (and reverse-probe) devices we have not met yet. */
+    val peerSeen: SharedFlow<SeenPeer> = _peerSeen.asSharedFlow()
+
     private val _transfers = MutableStateFlow<Map<Long, TransferSnapshot>>(emptyMap())
     val transfers: StateFlow<Map<Long, TransferSnapshot>> = _transfers.asStateFlow()
 
@@ -182,6 +191,10 @@ class TransferEngine(
     }
 
     private fun reduce(ev: TransferEvent) {
+        if (ev.kind == EventKind.PEER_SEEN) {
+            if (ev.name.isNotEmpty()) _peerSeen.tryEmit(SeenPeer(ev.name, ev.message))
+            return
+        }
         if (ev.kind == EventKind.LISTENING) {
             _listeningPort.value = ev.doneBytes.toInt()
             return
@@ -198,7 +211,7 @@ class TransferEngine(
                 EventKind.COMPLETED -> TransferState.COMPLETED
                 EventKind.FAILED -> TransferState.FAILED
                 EventKind.CANCELLED -> TransferState.CANCELLED
-                EventKind.LISTENING -> old?.state ?: TransferState.ACTIVE
+                EventKind.LISTENING, EventKind.PEER_SEEN -> old?.state ?: TransferState.ACTIVE // both return before this point
             }
             val receivedPath = if (ev.kind == EventKind.COMPLETED && ev.direction == Direction.RECEIVE) ev.name else null
             val displayName = when {

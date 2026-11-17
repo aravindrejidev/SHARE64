@@ -112,6 +112,26 @@ class DiscoveryManager(
         publish()
     }
 
+    /**
+     * A device that contacted our receiver and answered our reverse probe (see Share64Node). It has
+     * no stable identity yet ("scan:" id), so it is replaced as soon as DNS-SD or a QR code names it.
+     */
+    fun addSeenPeer(host: String, port: Int, name: String, protocolVersion: Int) {
+        val peer = PeerDevice(
+            id = "${PeerRegistry.SCAN_PREFIX}$host:$port",
+            serviceName = "",
+            displayName = name.ifBlank { host },
+            type = DeviceType.OTHER,
+            host = host,
+            port = port,
+            protocolVersion = protocolVersion,
+            reachable = true,
+            lastSeenMs = System.currentTimeMillis(),
+        )
+        val added = synchronized(registry) { registry.upsert(peer) }
+        if (added) publish()
+    }
+
     fun removePeer(id: String) {
         synchronized(registry) { registry.remove(id) }
         publish()

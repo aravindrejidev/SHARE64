@@ -77,7 +77,7 @@ fun TvHomeScreen(vm: TvViewModel) {
     val settings by vm.settingsState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
-    var showManual by remember { mutableStateOf(false) }
+    var showQr by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     val updateState by UpdateManager.state.collectAsStateWithLifecycle()
     val updateSheetVisible by UpdateManager.sheetVisible.collectAsStateWithLifecycle()
@@ -143,10 +143,10 @@ fun TvHomeScreen(vm: TvViewModel) {
                 }
                 item(key = "manual") {
                     ActionTile(
-                        title = "Add by address",
-                        subtitle = if (state.peers.isEmpty()) "Nothing found yet" else "Enter an IP address",
+                        title = "Connect with QR",
+                        subtitle = if (state.peers.isEmpty()) "Nothing found yet" else "Scan with your phone",
                         modifier = if (state.peers.isEmpty()) Modifier.focusRequester(firstItem) else Modifier,
-                        onClick = { showManual = true },
+                        onClick = { showQr = true },
                     )
                 }
             }
@@ -219,36 +219,15 @@ fun TvHomeScreen(vm: TvViewModel) {
         }
     }
 
-    if (showManual) {
-        var text by remember { mutableStateOf("") }
-        TvDialog(onDismiss = { showManual = false }) {
-            Text("Add by address", style = MaterialTheme.typography.headlineMedium)
-            Text(
-                "Enter the IP address shown in the other device's settings, e.g. 192.168.1.20 or 192.168.1.20:52364.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                singleLine = true,
-                label = { Text("IP address") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = {
-                    if (text.isNotBlank()) { vm.connectManually(text); showManual = false }
-                }),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                TvButton(
-                    "Connect",
-                    onClick = { vm.connectManually(text); showManual = false },
-                    primary = true,
-                    enabled = text.isNotBlank(),
-                )
-                TvButton("Cancel", onClick = { showManual = false })
-            }
-        }
+    if (showQr) {
+        TvQrDialog(
+            payload = state.qrPayload,
+            deviceName = state.deviceName,
+            status = state.status,
+            address = state.addresses.firstOrNull().orEmpty() + if (state.port > 0) ":${state.port}" else "",
+            peers = state.peers,
+            onDismiss = { showQr = false },
+        )
     }
 
     if (updateSheetVisible && updateState.isActionable) {
