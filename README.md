@@ -4,7 +4,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/logo/share64-lockup-dark.png">
-  <img alt="SHARE64" src="assets/readme/logo/share64-lockup-light.png" width="380">
+  <img alt="SHARE64" src="assets/readme/logo/share64-lockup-light.png" width="350">
 </picture>
 
 ### Local Wi-Fi file sharing for Android phones and TVs
