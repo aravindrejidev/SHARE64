@@ -7,7 +7,7 @@
 
 # SHARE64 1.1.3
 
-The first public release.
+Update 
 
 ## What's new
 - Share with anyone
