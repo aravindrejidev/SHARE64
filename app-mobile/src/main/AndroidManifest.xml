@@ -34,6 +34,13 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
             </intent-filter>
+            <!-- "Open in SHARE64" button on the web page of a "share with anyone" session -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="share64" android:host="w" />
+            </intent-filter>
         </activity>
 
     </application>

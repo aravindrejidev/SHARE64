@@ -80,6 +80,9 @@ class MainActivity : ComponentActivity() {
                 val uris = streamListExtra(intent)
                 if (uris.isNotEmpty()) vm.onSharedUris(uris)
             }
+            // "Open in SHARE64" on a web-share page: share64://w?u=<link>. Never downloads by itself:
+            // the app shows what is offered and waits for the person to tap Download.
+            Intent.ACTION_VIEW -> intent.dataString?.let { vm.openWebLink(it) }
         }
     }
 

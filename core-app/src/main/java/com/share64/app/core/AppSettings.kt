@@ -19,6 +19,11 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_SHARING, true)
         set(value) { prefs.edit().putBoolean(KEY_SHARING, value).apply() }
 
+    /** "Share with anyone": let new browser devices in without asking. Off by default. */
+    var webAutoAllow: Boolean
+        get() = prefs.getBoolean(KEY_WEB_AUTO, false)
+        set(value) { prefs.edit().putBoolean(KEY_WEB_AUTO, value).apply() }
+
     /** Accept every incoming file without asking. Off by default. */
     var autoAccept: Boolean
         get() = prefs.getBoolean(KEY_AUTO_ACCEPT, false)
@@ -70,6 +75,7 @@ class AppSettings(context: Context) {
         const val KEY_SKIPPED = "skipped_version"
         const val KEY_BACKGROUND = "receive_in_background"
         const val KEY_SHARING = "sharing_enabled"
+        const val KEY_WEB_AUTO = "web_auto_allow"
         const val KEY_AUTO_ACCEPT = "auto_accept"
         const val KEY_PORT = "port"
         const val KEY_TREE = "download_tree_uri"

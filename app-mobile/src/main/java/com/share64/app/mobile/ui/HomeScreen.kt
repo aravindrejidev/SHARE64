@@ -56,8 +56,9 @@ import com.share64.network.DiscoveryStatus
  * cards that spring in, wavy-progress transfer cards and a FAB menu with bouncy motion.
  */
 @Composable
-fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit, onOpenConnect: () -> Unit) {
+fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit, onOpenConnect: () -> Unit, onOpenWebShare: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val web by vm.webShare.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var fabExpanded by remember { mutableStateOf(false) }
@@ -124,6 +125,12 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit, onOpenConnect: () 
                             if (!on && state.activeTransfers > 0) confirmStop = true else vm.setSharingEnabled(on)
                         },
                     )
+                }
+
+                web?.let { session ->
+                    item(key = "web-banner", span = { GridItemSpan(maxLineSpan) }) {
+                        WebShareBanner(session, onOpen = onOpenWebShare, onStop = vm::stopWebShare, modifier = Modifier.animateItem())
+                    }
                 }
 
                 item(key = "devices-title", span = { GridItemSpan(maxLineSpan) }) {
@@ -196,6 +203,7 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit, onOpenConnect: () 
                         picker.launch(arrayOf("*/*"))
                     },
                     FabAction("Connect with QR", ShareIcons.QrCode) { onOpenConnect() },
+                    FabAction("Share with anyone", ShareIcons.Link) { onOpenWebShare() },
                 ),
                 modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp),
             )
@@ -234,6 +242,10 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit, onOpenConnect: () 
             peers = state.peers,
             onPick = { vm.sendPendingTo(it) },
             onManual = onOpenConnect,
+            onWebShare = {
+                vm.startWebShareFromPending()
+                onOpenWebShare()
+            },
             onDismiss = { vm.clearPending() },
         )
     }

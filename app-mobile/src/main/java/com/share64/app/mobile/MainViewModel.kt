@@ -11,11 +11,17 @@ import com.share64.app.core.Formatting
 import com.share64.app.core.OutgoingFile
 import com.share64.app.core.OutgoingFiles
 import com.share64.app.core.PortRules
+import com.share64.app.core.SavedFile
 import com.share64.app.core.ShareRuntime
 import com.share64.app.core.ShareService
 import com.share64.app.core.ThemeMode
 import com.share64.app.core.TransferItem
 import com.share64.app.core.TransferPresenter
+import com.share64.app.core.WebDownloadException
+import com.share64.app.core.WebDownloader
+import com.share64.app.core.WebDownloads
+import com.share64.app.core.WebFileInfo
+import com.share64.app.core.WebShareHost
 import com.share64.core.TransferSnapshot
 import com.share64.core.TransferState
 import com.share64.network.ConnectInfo
@@ -25,8 +31,12 @@ import com.share64.network.PeerDevice
 import com.share64.network.QrConnectResult
 import com.share64.network.QrParse
 import com.share64.network.QrPayload
+import com.share64.network.web.WebClient
+import com.share64.network.web.WebShareLink
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -59,6 +69,28 @@ data class MainUiState(
     /** The text of this device's QR code; null while it cannot be reached (no network, sharing off). */
     val qrPayload: String? = null,
 )
+
+/** A running "share with anyone" session, as the screen shows it. */
+data class WebShareUi(
+    /** One link per local address (home Wi-Fi, hotspot, ...), best first. */
+    val urls: List<String>,
+    val sender: String,
+    val files: List<WebFileInfo>,
+    val totalBytes: Long,
+    val clients: List<WebClient>,
+    val autoAllow: Boolean,
+)
+
+/** Receiving a "share with anyone" session inside the app (after scanning its QR code). */
+sealed interface WebDownloadUi {
+    data object Idle : WebDownloadUi
+    data class Connecting(val host: String) : WebDownloadUi
+    data class Waiting(val sender: String) : WebDownloadUi
+    data class Ready(val sender: String, val files: List<WebFileInfo>) : WebDownloadUi
+    data class Downloading(val sender: String, val files: List<WebFileInfo>, val index: Int, val doneBytes: Long, val totalBytes: Long) : WebDownloadUi
+    data class Done(val sender: String, val saved: List<SavedFile>) : WebDownloadUi
+    data class Failed(val title: String, val detail: String) : WebDownloadUi
+}
 
 /** Where a QR scan stands. */
 sealed interface QrUiState {
@@ -242,6 +274,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** A code came out of the camera. Only the first one counts until the result is dealt with. */
     fun onQrScanned(text: String) {
+        if (openWebLink(text)) return // a "share with anyone" link: download through the app instead of pairing
         if (_qr.value != QrUiState.Idle) return
         _qr.value = QrUiState.Connecting
         viewModelScope.launch {
@@ -276,6 +309,166 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _qr.value = QrUiState.Idle
     }
 
+    // ---------------------------------------------------------------- share with anyone: hosting
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val addressesFlow: Flow<List<String>> = ShareRuntime.node.flatMapLatest { it?.localAddresses ?: flowOf(emptyList()) }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val webShare: StateFlow<WebShareUi?> = WebShareHost.session.flatMapLatest { s ->
+        if (s == null) {
+            flowOf(null)
+        } else {
+            combine(s.server.clients, s.server.autoAllow, addressesFlow) { clients, auto, addresses ->
+                WebShareUi(addresses.map { s.server.url(it) }, s.sender, s.files, s.totalBytes, clients, auto)
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    fun startWebShare(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) { startWebShareFiles(uris.map { OutgoingFiles.describe(appContext, it) }) }
+    }
+
+    /** The files waiting in the "send to" sheet become a web share instead. */
+    fun startWebShareFromPending() {
+        val files = pending.value
+        pending.value = emptyList()
+        if (files.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) { startWebShareFiles(files) }
+    }
+
+    private suspend fun startWebShareFiles(files: List<OutgoingFile>) {
+        if (ShareRuntime.node.value == null) {
+            _messages.send(
+                if (settings.sharingEnabled) "SHARE64 is still starting — try again in a moment"
+                else "Sharing is off. Turn it on first.",
+            )
+            return
+        }
+        if (WebShareHost.start(appContext, files, identity.displayName, settings.webAutoAllow) == null) {
+            _messages.send("Couldn't start web sharing")
+        }
+    }
+
+    fun stopWebShare() = WebShareHost.stop()
+
+    fun setWebAutoAllow(on: Boolean) {
+        settings.webAutoAllow = on
+        WebShareHost.session.value?.server?.setAutoAllow(on)
+    }
+
+    fun approveWebClient(id: String) { WebShareHost.session.value?.server?.approve(id) }
+    fun denyWebClient(id: String) { WebShareHost.session.value?.server?.deny(id) }
+    fun removeWebClient(id: String) { WebShareHost.session.value?.server?.remove(id) }
+
+    // ---------------------------------------------------------------- share with anyone: receiving in the app
+
+    private val _web = MutableStateFlow<WebDownloadUi>(WebDownloadUi.Idle)
+    val webDownload: StateFlow<WebDownloadUi> = _web.asStateFlow()
+    private var webJob: Job? = null
+    private var webDownloader: WebDownloader? = null
+    private var webLink: WebShareLink? = null
+    private var closedLink: WebShareLink? = null
+    private var closedAtMs = 0L
+
+    private fun setWeb(state: WebDownloadUi) {
+        _web.value = state
+        ShareRuntime.setWebBusy(state is WebDownloadUi.Connecting || state is WebDownloadUi.Waiting || state is WebDownloadUi.Downloading)
+    }
+
+    /**
+     * A scanned QR code or opened link that points at a "share with anyone" session. Returns true when it
+     * was one (the app then connects and shows the file list); false for anything else.
+     */
+    fun openWebLink(text: String): Boolean {
+        val link = WebShareLink.parse(text) ?: return false
+        if (_web.value != WebDownloadUi.Idle) return true
+        // the camera may still be pointing at the code we just closed
+        if (link == closedLink && System.currentTimeMillis() - closedAtMs < 6_000) return true
+        startWebSession(link)
+        return true
+    }
+
+    private fun startWebSession(link: WebShareLink) {
+        webLink = link
+        setWeb(WebDownloadUi.Connecting(link.host))
+        val downloader = WebDownloads.create(appContext, link, identity.displayName, settings.downloadTreeUri)
+        webDownloader = downloader
+        webJob = viewModelScope.launch {
+            try {
+                val manifest = downloader.connect { sender -> setWeb(WebDownloadUi.Waiting(sender)) }
+                setWeb(WebDownloadUi.Ready(manifest.sender, manifest.files))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: WebDownloadException) {
+                setWeb(webFailure(e))
+            } catch (e: Exception) {
+                setWeb(WebDownloadUi.Failed("Something went wrong", e.message.orEmpty()))
+            }
+        }
+    }
+
+    /** The person looked at the file list and chose to download everything. */
+    fun startWebDownload() {
+        val ready = _web.value as? WebDownloadUi.Ready ?: return
+        val downloader = webDownloader ?: return
+        val total = ready.files.sumOf { maxOf(it.size, 0L) }
+        setWeb(WebDownloadUi.Downloading(ready.sender, ready.files, 0, 0, total))
+        webJob = viewModelScope.launch {
+            var lastUi = 0L
+            try {
+                val saved = downloader.downloadAll(ready.files) { index, _, done ->
+                    val now = System.currentTimeMillis()
+                    if (now - lastUi >= 120) { // ~8 updates a second is plenty for a progress bar
+                        lastUi = now
+                        setWeb(WebDownloadUi.Downloading(ready.sender, ready.files, index, done, total))
+                    }
+                }
+                setWeb(WebDownloadUi.Done(ready.sender, saved))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: WebDownloadException) {
+                setWeb(webFailure(e))
+            } catch (e: Exception) {
+                setWeb(WebDownloadUi.Failed("Download failed", e.message.orEmpty()))
+            }
+        }
+    }
+
+    /** Cancel, or close the result: back to normal. A partly downloaded file is kept and resumes next time. */
+    fun closeWeb() {
+        webDownloader?.cancel()
+        webJob?.cancel()
+        webJob = null
+        webDownloader = null
+        closedLink = webLink
+        closedAtMs = System.currentTimeMillis()
+        setWeb(WebDownloadUi.Idle)
+    }
+
+    fun retryWeb() {
+        val link = webLink ?: return closeWeb()
+        webDownloader?.cancel()
+        webJob?.cancel()
+        startWebSession(link)
+    }
+
+    private fun webFailure(e: WebDownloadException): WebDownloadUi.Failed = when (e.kind) {
+        WebDownloadException.Kind.UNREACHABLE -> WebDownloadUi.Failed("Couldn't reach the sender", "Be on the same Wi-Fi, or on the sender's hotspot, then try again.")
+        WebDownloadException.Kind.DENIED -> WebDownloadUi.Failed("The sender declined", "They didn't allow this device.")
+        WebDownloadException.Kind.FULL -> WebDownloadUi.Failed("This share is full", "Ask the sender to remove a device, then try again.")
+        WebDownloadException.Kind.TIMED_OUT -> WebDownloadUi.Failed("No answer", "The sender didn't tap Allow in time. Ask them and try again.")
+        WebDownloadException.Kind.REVOKED -> WebDownloadUi.Failed("Access was removed", "The sender stopped allowing this device or ended the share.")
+        WebDownloadException.Kind.DISK -> WebDownloadUi.Failed("Not enough space", "Free up some storage and try again; the part already downloaded is kept.")
+        WebDownloadException.Kind.FAILED -> WebDownloadUi.Failed("Download failed", e.message.orEmpty().ifBlank { "Check the connection and try again." })
+    }
+
+    override fun onCleared() {
+        ShareRuntime.setWebBusy(false)
+        super.onCleared()
+    }
+
     // ---------------------------------------------------------------- master switch
 
     /**
@@ -294,6 +487,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             pending.value = emptyList()
             targetPeer = null
+            WebShareHost.stop()
             ShareService.stop(appContext)
             postMessage("Sharing is off")
         }

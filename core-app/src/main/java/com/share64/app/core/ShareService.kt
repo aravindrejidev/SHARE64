@@ -164,11 +164,20 @@ class ShareService : Service() {
             }
         }
         observers += scope.launch {
+            // A "share with anyone" session or download starting or ending changes locks and idle policy.
+            combine(WebShareHost.session, WebShareHost.busy, ShareRuntime.webBusy) { s, b, w -> Triple(s != null, b, w) }
+                .collect {
+                    updateLocks()
+                    stopIfIdle(n.transfers.value.values)
+                }
+        }
+        observers += scope.launch {
             // Notification refresh is throttled to ~1 Hz; the engine reports progress ~10x per second.
-            combine(n.transfers, n.discoveryStatus) { t, s -> t.values to s }.conflate().collect { (t, s) ->
-                refreshForeground(n, t, s)
-                delay(1_000)
-            }
+            combine(n.transfers, n.discoveryStatus, WebShareHost.session, WebShareHost.busy) { t, s, w, b -> Triple(t.values, s, w to b) }
+                .conflate().collect { (t, s, web) ->
+                    refreshForeground(n, t, s, web.first, web.second)
+                    delay(1_000)
+                }
         }
     }
 
@@ -195,6 +204,7 @@ class ShareService : Service() {
         val gen = generation.get()
         scope.launch(Dispatchers.IO) {
             closeNode()
+            WebShareHost.stop() // sharing is off: no browser session may keep running
             if (generation.get() != gen) {
                 // Started again while we were closing (the switch was flipped back on): carry on.
                 if (settings.sharingEnabled) ensureNode()
@@ -209,6 +219,7 @@ class ShareService : Service() {
     // ---------------------------------------------------------------- reacting to transfers
 
     private fun isBusy(all: Collection<TransferSnapshot>): Boolean {
+        if (ShareRuntime.webBusy.value || WebShareHost.busy.value) return true
         val now = System.currentTimeMillis()
         return all.any {
             when (it.state) {
@@ -281,19 +292,22 @@ class ShareService : Service() {
 
     private fun stopIfIdle(all: Collection<TransferSnapshot>) {
         if (!ShareRuntime.uiVisible.value && !settings.receiveInBackground && !isBusy(all) &&
+            WebShareHost.session.value == null &&
             all.none { it.state == TransferState.OFFERED }
         ) {
             shutdown()
         }
     }
 
-    private fun refreshForeground(n: Share64Node, all: Collection<TransferSnapshot>, status: DiscoveryStatus) {
+    private fun refreshForeground(n: Share64Node, all: Collection<TransferSnapshot>, status: DiscoveryStatus, web: WebShareSession?, webBusy: Boolean) {
         val active = all.filter { it.state == TransferState.ACTIVE || it.state == TransferState.RETRYING }
         val reconnecting = active.count { it.state == TransferState.RETRYING }
         val text = when {
             active.isNotEmpty() ->
                 "${active.size} transfer${if (active.size == 1) "" else "s"} " +
                     if (reconnecting == active.size) "reconnecting" else "running"
+            webBusy -> "Sending to a browser"
+            web != null -> "Sharing with anyone via browser · ${web.files.size} file${if (web.files.size == 1) "" else "s"}"
             status is DiscoveryStatus.NoNetwork -> "No Wi-Fi or hotspot connection"
             status is DiscoveryStatus.Error -> status.message
             status is DiscoveryStatus.Running -> "Ready to receive · ${status.address} (${status.network.label})"
@@ -306,6 +320,7 @@ class ShareService : Service() {
 
     override fun onDestroy() {
         running = false
+        WebShareHost.stop()
         closeNode()
         scope.cancel()
         super.onDestroy()

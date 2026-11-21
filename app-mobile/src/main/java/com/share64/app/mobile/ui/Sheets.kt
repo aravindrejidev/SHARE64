@@ -36,6 +36,7 @@ fun SendSheet(
     peers: List<PeerDevice>,
     onPick: (PeerDevice) -> Unit,
     onManual: () -> Unit,
+    onWebShare: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -89,8 +90,9 @@ fun SendSheet(
                 peers.forEachIndexed { i, p -> PeerRow(p, index = i, count = peers.size, onClick = { onPick(p) }) }
             }
             Spacer(Modifier.height(14.dp))
-            ExpressiveButton(onClick = onManual, kind = ButtonKind.Tonal, modifier = Modifier.align(Alignment.End)) {
-                Text("Connect with QR")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End)) {
+                ExpressiveButton(onClick = onWebShare, kind = ButtonKind.Tonal) { Text("Share with anyone") }
+                ExpressiveButton(onClick = onManual, kind = ButtonKind.Tonal) { Text("Connect with QR") }
             }
         }
     }

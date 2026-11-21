@@ -15,6 +15,9 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,7 +31,7 @@ import com.share64.app.core.UpdateManager
 import com.share64.app.core.isActionable
 import com.share64.app.mobile.MainViewModel
 
-private enum class Screen(val depth: Int) { Home(0), Settings(1), About(2), Connect(1) }
+private enum class Screen(val depth: Int) { Home(0), Settings(1), About(2), Connect(1), WebShare(1) }
 
 /**
  * Home -> Settings -> About slide in the direction of travel; the QR "Connect" screen rises from the
@@ -43,13 +46,14 @@ fun Share64App(vm: MainViewModel) {
     BackHandler(enabled = screen != Screen.Home) {
         go(if (screen == Screen.About) Screen.Settings else Screen.Home)
     }
+    Box(modifier = Modifier.fillMaxSize()) {
     AnimatedContent(
         targetState = screen,
         transitionSpec = {
-            if (targetState == Screen.Connect) {
+            if (targetState == Screen.Connect || targetState == Screen.WebShare) {
                 (slideInVertically(spring(0.85f, Spring.StiffnessMediumLow)) { it / 5 } + fadeIn(tween(240)) + scaleIn(tween(300), initialScale = 0.96f)) togetherWith
                     fadeOut(tween(160))
-            } else if (initialState == Screen.Connect) {
+            } else if (initialState == Screen.Connect || initialState == Screen.WebShare) {
                 fadeIn(tween(240)) togetherWith
                     (slideOutVertically(tween(280, easing = FastOutSlowInEasing)) { it / 5 } + fadeOut(tween(200)) + scaleOut(tween(280), targetScale = 0.96f))
             } else if (targetState.depth > initialState.depth) {
@@ -63,11 +67,20 @@ fun Share64App(vm: MainViewModel) {
         label = "screen",
     ) { current ->
         when (current) {
-            Screen.Home -> HomeScreen(vm = vm, onOpenSettings = { go(Screen.Settings) }, onOpenConnect = { go(Screen.Connect) })
+            Screen.Home -> HomeScreen(
+                vm = vm,
+                onOpenSettings = { go(Screen.Settings) },
+                onOpenConnect = { go(Screen.Connect) },
+                onOpenWebShare = { go(Screen.WebShare) },
+            )
             Screen.Settings -> SettingsScreen(vm = vm, onBack = { go(Screen.Home) }, onOpenAbout = { go(Screen.About) })
             Screen.About -> AboutScreen(onBack = { go(Screen.Settings) })
             Screen.Connect -> ConnectScreen(vm = vm, onBack = { go(Screen.Home) })
+            Screen.WebShare -> WebShareScreen(vm = vm, onBack = { go(Screen.Home) })
         }
+    }
+    // Receiving a "share with anyone" link covers every screen.
+    WebDownloadOverlay(vm)
     }
 
     // In-app updater: opens by itself when a new release is found at launch.

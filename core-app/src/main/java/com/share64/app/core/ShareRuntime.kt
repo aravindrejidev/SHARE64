@@ -15,6 +15,14 @@ object ShareRuntime {
     private val _node = MutableStateFlow<Share64Node?>(null)
     val node: StateFlow<Share64Node?> = _node.asStateFlow()
 
+    private val _webBusy = MutableStateFlow(false)
+    /** True while this app is downloading a "share with anyone" session (keeps the service and wake locks alive). */
+    val webBusy: StateFlow<Boolean> = _webBusy.asStateFlow()
+
+    fun setWebBusy(busy: Boolean) {
+        _webBusy.value = busy
+    }
+
     private val _uiVisible = MutableStateFlow(false)
     /** True while an Activity of the app is started. Drives notification and auto-stop policy. */
     val uiVisible: StateFlow<Boolean> = _uiVisible.asStateFlow()
