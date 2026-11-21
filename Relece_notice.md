@@ -5,18 +5,10 @@
   Supported: # headings, - bullets, 1. numbered lists, **bold**, *italic*, `code`, [links](url), > quotes.
 -->
 
-# SHARE64 1.0.0
+# SHARE64 1.1.3
 
 The first public release.
 
 ## What's new
-- Send files between phones and TVs over your own Wi-Fi: no cloud, no account
-- Transfers **resume by themselves** if the Wi-Fi drops
-- Every chunk is checked with SHA-256, so files arrive intact
-- Material You design with dynamic color and an AMOLED dark mode
-- Works on Android phones and Android TV / Fire TV
-- Built-in updater
-
-## Good to know
-- Both devices must be on the same Wi-Fi (or Ethernet) network
-- Received files are saved in `Downloads/SHARE64` (you can change the folder in Settings)
+- Share with anyone
+- browser download for people without SHARE64
