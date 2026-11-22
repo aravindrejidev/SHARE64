@@ -11,7 +11,7 @@ data class UpdateInfo(
     val tag: String,
     val version: String,
     val title: String,
-    /** Markdown from Relece_notice.md (may be empty). */
+    /** Markdown from Release_notice.md (may be empty). */
     val notes: String,
     val publishedAt: String?,
     val assetName: String,

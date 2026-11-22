@@ -21,8 +21,11 @@ object AppInfo {
     const val LATEST_RELEASE_API_URL = "https://api.github.com/repos/$DEVELOPER_GITHUB/$REPO_NAME/releases/latest"
     const val RAW_BASE_URL = "https://raw.githubusercontent.com/$DEVELOPER_GITHUB/$REPO_NAME"
 
-    /** Release notes shown by the updater: this file in the repo root (both spellings are accepted). */
-    val RELEASE_NOTICE_FILES = listOf("Relece_notice.md", "Release_notice.md")
+    /**
+     * Release notes shown by the updater: this file in the repo root. The correct spelling is tried
+     * first; the old misspelt name stays as a fallback so repositories and older apps that still use it work.
+     */
+    val RELEASE_NOTICE_FILES = listOf("Release_notice.md", "Relece_notice.md")
 
     const val CONTRIBUTORS_API_URL = "https://api.github.com/repos/$DEVELOPER_GITHUB/$REPO_NAME/contributors?per_page=30"
 

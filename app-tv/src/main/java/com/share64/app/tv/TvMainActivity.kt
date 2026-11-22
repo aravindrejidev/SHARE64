@@ -27,6 +27,7 @@ class TvMainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         ShareRuntime.setUiVisible(true)
+        vm.onActivityStarted()
         ShareService.start(this)
         UpdateManager.checkOnLaunch()
         UpdateManager.onForeground()

@@ -145,7 +145,8 @@ No accounts. No ads. No analytics. Your files never leave your network. The inte
 #### TV app
 - **Android TV and Fire TV** with a dark 10-foot interface, D-pad focus rings, Leanback launcher entry and banner.
 - **Incoming and outgoing dashboard** on the big screen.
-- Receive straight to the TV; send to it from your phone.
+- Receive straight to the TV, or send from the TV: a **built-in file browser** made for the remote (OK opens a folder or ticks a file, Back goes up) works even on TVs and Fire TV boxes that have no system file picker. USB drives and SD cards show up too.
+- **Share with anyone** on the TV: it shows a QR code, a phone scans it with its normal camera and downloads the files in the browser. You answer Allow / Decline with the remote.
 
 #### Updates and About
 - **In-app updater** — checks GitHub Releases, picks the APK that matches your device, verifies its SHA-256 and hands it to the Android installer. Android also refuses any APK not signed with the same key.
@@ -380,7 +381,7 @@ cmake -S core-cpp/src/main/cpp -B build && cmake --build build -j && ./build/sha
 <details>
 <summary><b>For maintainers: publishing a release</b></summary>
 
-1. Edit **`Relece_notice.md`** in the repository root. Its text is what people see under "What's new" in the update sheet. (`Release_notice.md` works too.)
+1. Edit **`Release_notice.md`** in the repository root. Its text is what people see under "What's new" in the update sheet. (The old misspelt name `Relece_notice.md` is still read if the new file is missing, so older installs keep working.)
 2. Go to **Actions → Release → Run workflow** and fill in `version_name` (e.g. `1.0.0`), `version_code`, `target_device` (`all`, `phone` or `tv`), `build_type` and `publish_release`.
 3. The workflow runs the tests, builds every CPU variant plus a universal APK per app, verifies each signature and publishes a GitHub Release with `SHA256SUMS.txt`.
 

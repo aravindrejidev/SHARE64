@@ -59,6 +59,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.share64.app.core.AppInfo
+import com.share64.app.core.StorageAccess
 import com.share64.app.core.UpdateManager
 import com.share64.app.core.UpdateState
 import com.share64.app.core.UpdateText
@@ -69,7 +70,11 @@ import com.share64.app.tv.TvUiState
 import com.share64.app.tv.TvViewModel
 import com.share64.network.DiscoveryStatus
 import com.share64.network.PeerTxt
+import com.share64.network.web.ClientState
 import kotlinx.coroutines.delay
+
+/** Why the file picker is open: send to the device that was chosen, or start a "Share with anyone" session. */
+private enum class PickPurpose { SEND, WEB }
 
 @Composable
 fun TvHomeScreen(vm: TvViewModel) {
@@ -79,23 +84,60 @@ fun TvHomeScreen(vm: TvViewModel) {
     var showSettings by remember { mutableStateOf(false) }
     var showQr by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
+    val web by vm.webShare.collectAsStateWithLifecycle()
+    val startTick by vm.startTick.collectAsStateWithLifecycle()
+    var pickPurpose by remember { mutableStateOf<PickPurpose?>(null) } // in-app file picker open
+    var askAccess by remember { mutableStateOf<PickPurpose?>(null) } // "allow access to files" dialog open
+    var pickTarget by remember { mutableStateOf("") }
+    var showWeb by remember { mutableStateOf(false) }
     val updateState by UpdateManager.state.collectAsStateWithLifecycle()
     val updateSheetVisible by UpdateManager.sheetVisible.collectAsStateWithLifecycle()
     val installedVersion = remember { AppInfo.read(context).versionName }
     var toast by remember { mutableStateOf<String?>(null) }
     val firstItem = remember { FocusRequester() }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+    // Fallback for TVs that do have a system picker but won't let SHARE64 browse storage itself.
+    val systemPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         vm.onFilesPicked(uris)
     }
+    val systemWebPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.startWebShareUris(uris) { ok -> showWeb = ok }
+    }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val storagePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val purpose = askAccess
+        if (granted && purpose != null) {
+            askAccess = null
+            pickPurpose = purpose
+        }
+    }
 
-    // Many TV boxes (Fire TV, some Android TV builds) ship without a system file picker.
-    fun pickFiles() {
+    // Most TV boxes (Fire TV, many Android TV builds) have no system file picker, so SHARE64 has its own.
+    fun startPicking(purpose: PickPurpose) {
+        if (StorageAccess.granted(context)) pickPurpose = purpose else askAccess = purpose
+    }
+
+    fun openWebShare() {
+        if (web != null) showWeb = true else startPicking(PickPurpose.WEB)
+    }
+
+    fun useSystemPicker(purpose: PickPurpose) {
         try {
-            picker.launch(arrayOf("*/*"))
+            if (purpose == PickPurpose.SEND) systemPicker.launch(arrayOf("*/*")) else systemWebPicker.launch(arrayOf("*/*"))
         } catch (_: ActivityNotFoundException) {
-            toast = "This TV has no file picker. Send files from your phone to this TV instead."
+            toast = "This TV has no system file picker either."
+        }
+    }
+
+    fun allowStorage() {
+        try {
+            if (StorageAccess.needsSettingsScreen) {
+                if (!StorageAccess.openSettings(context)) toast = "This TV has no screen for file access. Try the system picker."
+            } else {
+                storagePermission.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+        } catch (_: ActivityNotFoundException) {
+            toast = "This TV can't show the permission question. Try the system picker."
         }
     }
 
@@ -112,6 +154,19 @@ fun TvHomeScreen(vm: TvViewModel) {
             delay(4_000)
             toast = null
         }
+    }
+    // Back from the system "All files access" screen: carry on with what the person wanted to do.
+    LaunchedEffect(startTick) {
+        val purpose = askAccess
+        if (purpose != null && StorageAccess.granted(context)) {
+            askAccess = null
+            pickPurpose = purpose
+        }
+    }
+    LaunchedEffect(web == null) { if (web == null) showWeb = false }
+    val waitingDevices = web?.clients?.count { it.state == ClientState.PENDING } ?: 0
+    LaunchedEffect(waitingDevices) {
+        if (waitingDevices > 0 && !showWeb) toast = "A device is waiting for your OK in Share with anyone"
     }
     // Start with focus on the first tile so the remote works immediately.
     LaunchedEffect(Unit) {
@@ -137,7 +192,8 @@ fun TvHomeScreen(vm: TvViewModel) {
                         modifier = if (index == 0) Modifier.focusRequester(firstItem) else Modifier,
                         onClick = {
                             vm.chooseTarget(peer)
-                            pickFiles()
+                            pickTarget = peer.displayName
+                            startPicking(PickPurpose.SEND)
                         },
                     )
                 }
@@ -147,6 +203,19 @@ fun TvHomeScreen(vm: TvViewModel) {
                         subtitle = if (state.peers.isEmpty()) "Nothing found yet" else "Scan with your phone",
                         modifier = if (state.peers.isEmpty()) Modifier.focusRequester(firstItem) else Modifier,
                         onClick = { showQr = true },
+                    )
+                }
+                item(key = "web") {
+                    ActionTile(
+                        title = "Share with anyone",
+                        subtitle = when {
+                            web == null -> "No app needed"
+                            waitingDevices > 0 -> "$waitingDevices waiting for you"
+                            else -> "Running \u00B7 open"
+                        },
+                        icon = TvIcons.Link,
+                        highlight = web != null,
+                        onClick = { openWebShare() },
                     )
                 }
             }
@@ -216,6 +285,55 @@ fun TvHomeScreen(vm: TvViewModel) {
                 delay(150)
                 runCatching { acceptFocus.requestFocus() }
             }
+        }
+    }
+
+    askAccess?.let { purpose ->
+        TvStorageAccessDialog(
+            onAllow = { allowStorage() },
+            onSystemPicker = {
+                askAccess = null
+                useSystemPicker(purpose)
+            },
+            onDismiss = { askAccess = null },
+        )
+    }
+
+    pickPurpose?.let { purpose ->
+        val sending = purpose == PickPurpose.SEND
+        TvFilePicker(
+            title = if (sending) "Choose files to send" else "Choose files to share",
+            destination = if (sending) pickTarget else "Anyone with the link",
+            confirmLabel = { n ->
+                when {
+                    n == 0 -> if (sending) "Tick files to send" else "Tick files to share"
+                    sending -> if (n == 1) "Send 1 file" else "Send $n files"
+                    else -> if (n == 1) "Share 1 file" else "Share $n files"
+                }
+            },
+            onConfirm = { files ->
+                pickPurpose = null
+                if (sending) vm.onFilesChosen(files) else vm.startWebShare(files) { ok -> showWeb = ok }
+            },
+            onClose = { pickPurpose = null },
+        )
+    }
+
+    if (showWeb) {
+        val session = web
+        if (session != null) {
+            TvWebShareDialog(
+                web = session,
+                onStop = {
+                    vm.stopWebShare()
+                    showWeb = false
+                },
+                onAutoAllow = vm::setWebAutoAllow,
+                onApprove = vm::approveWebClient,
+                onDeny = vm::denyWebClient,
+                onRemove = vm::removeWebClient,
+                onDismiss = { showWeb = false },
+            )
         }
     }
 

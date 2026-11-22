@@ -134,6 +134,16 @@ class UpdateClientTest {
         assertEquals("", client().fetchNotes("v1.2.0"))
     }
 
+    @Test fun correctedNoticeNameWinsOverTheOldMisspelling() {
+        assertEquals(listOf("Release_notice.md", "Relece_notice.md"), AppInfo.RELEASE_NOTICE_FILES)
+        routes["/raw/v1.2.0/Relece_notice.md"] = 200 to "old name".toByteArray()
+        routes["/raw/v1.2.0/Release_notice.md"] = 200 to "new name".toByteArray()
+        assertEquals("new name", client(AppInfo.RELEASE_NOTICE_FILES).fetchNotes("v1.2.0"))
+
+        routes.remove("/raw/v1.2.0/Release_notice.md")
+        assertEquals("old name", client(AppInfo.RELEASE_NOTICE_FILES).fetchNotes("v1.2.0"))
+    }
+
     @Test fun downloadsThroughARedirectWithProgress() {
         val dest = File(tmp, "updates/app.apk")
         val seen = ArrayList<Long>()

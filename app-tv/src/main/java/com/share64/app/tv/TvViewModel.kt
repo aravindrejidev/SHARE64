@@ -13,6 +13,8 @@ import com.share64.app.core.ShareRuntime
 import com.share64.app.core.ShareService
 import com.share64.app.core.TransferItem
 import com.share64.app.core.TransferPresenter
+import com.share64.app.core.WebFileInfo
+import com.share64.app.core.WebShareHost
 import com.share64.core.TransferSnapshot
 import com.share64.core.TransferState
 import com.share64.network.ConnectInfo
@@ -20,6 +22,7 @@ import com.share64.network.DeviceIdentity
 import com.share64.network.DiscoveryStatus
 import com.share64.network.PeerDevice
 import com.share64.network.QrPayload
+import com.share64.network.web.WebClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -34,6 +37,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.io.File
 
 data class TvOffer(val id: Long, val fileName: String, val sender: String, val size: String)
 
@@ -49,6 +53,17 @@ data class TvUiState(
     val offer: TvOffer? = null,
     /** Text of this TV's QR code (a phone scans it); null while the TV cannot be reached. */
     val qrPayload: String? = null,
+)
+
+/** What the "Share with anyone" dialog shows while a web share session runs. */
+data class TvWebShareUi(
+    /** One link per network this TV is on (usually one). */
+    val urls: List<String>,
+    val sender: String,
+    val files: List<WebFileInfo>,
+    val totalBytes: Long,
+    val clients: List<WebClient>,
+    val autoAllow: Boolean,
 )
 
 data class TvSettings(
@@ -122,10 +137,25 @@ class TvViewModel(app: Application) : AndroidViewModel(app) {
         return QrPayload.encode(ConnectInfo(me.id, node.deviceName.ifEmpty { me.displayName }, me.type, node.port, node.addresses))
     }
 
+    /** Counts how often the screen came back to the front (e.g. after the system "All files access" screen). */
+    private val _startTick = MutableStateFlow(0)
+    val startTick: StateFlow<Int> = _startTick.asStateFlow()
+    fun onActivityStarted() { _startTick.value += 1 }
+
     // ---------------------------------------------------------------- sending
 
     /** Remember which device was selected; the file picker result is then sent straight to it. */
     fun chooseTarget(peer: PeerDevice) { targetPeer = peer }
+
+    /** Files ticked in the in-app picker: sent to the device chosen with [chooseTarget]. */
+    fun onFilesChosen(files: List<File>) {
+        val target = targetPeer
+        targetPeer = null
+        if (files.isEmpty() || target == null) return
+        viewModelScope.launch(Dispatchers.IO) { sendTo(target, files.map { outgoing(it) }) }
+    }
+
+    private fun outgoing(f: File) = OutgoingFile(Uri.fromFile(f), f.name, f.length())
 
     fun onFilesPicked(uris: List<Uri>) {
         val target = targetPeer
@@ -153,6 +183,59 @@ class TvViewModel(app: Application) : AndroidViewModel(app) {
             },
         )
     }
+
+    // ---------------------------------------------------------------- share with anyone
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val addressesFlow: Flow<List<String>> = ShareRuntime.node.flatMapLatest { it?.localAddresses ?: flowOf(emptyList()) }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val webShare: StateFlow<TvWebShareUi?> = WebShareHost.session.flatMapLatest { s ->
+        if (s == null) {
+            flowOf(null)
+        } else {
+            combine(s.server.clients, s.server.autoAllow, addressesFlow) { clients, auto, addresses ->
+                TvWebShareUi(addresses.map { s.server.url(it) }, s.sender, s.files, s.totalBytes, clients, auto)
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Starts a web share of files ticked in the in-app picker. [onResult] runs on the main thread. */
+    fun startWebShare(files: List<File>, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) { startWeb(files.map { outgoing(it) }, onResult) }
+    }
+
+    /** Same, for files chosen with the system picker (TVs that have one). */
+    fun startWebShareUris(uris: List<Uri>, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) { startWeb(uris.map { OutgoingFiles.describe(appContext, it) }, onResult) }
+    }
+
+    private suspend fun startWeb(files: List<OutgoingFile>, onResult: (Boolean) -> Unit) {
+        val ok = when {
+            files.isEmpty() -> false
+            ShareRuntime.node.value == null -> {
+                _messages.send("SHARE64 is still starting \u2014 try again in a moment")
+                false
+            }
+            WebShareHost.start(appContext, files, identity.displayName, settings.webAutoAllow) == null -> {
+                _messages.send("Couldn't start web sharing")
+                false
+            }
+            else -> true
+        }
+        viewModelScope.launch { onResult(ok) }
+    }
+
+    fun stopWebShare() = WebShareHost.stop()
+
+    fun setWebAutoAllow(on: Boolean) {
+        settings.webAutoAllow = on
+        WebShareHost.session.value?.server?.setAutoAllow(on)
+    }
+
+    fun approveWebClient(id: String) { WebShareHost.session.value?.server?.approve(id) }
+    fun denyWebClient(id: String) { WebShareHost.session.value?.server?.deny(id) }
+    fun removeWebClient(id: String) { WebShareHost.session.value?.server?.remove(id) }
 
     // ---------------------------------------------------------------- transfer actions
 

@@ -22,7 +22,7 @@ import java.net.UnknownHostException
 /**
  * In-app updater shared by the phone and TV apps.
  *
- * Flow: check GitHub's latest release -> offer it (with the notes from Relece_notice.md) ->
+ * Flow: check GitHub's latest release -> offer it (with the notes from Release_notice.md) ->
  * download the APK that matches this device -> verify size and SHA-256 -> hand it to the system
  * installer. Android additionally refuses any update that is not signed with our key.
  */

@@ -220,7 +220,14 @@ fun DeviceTile(peer: PeerDevice, onClick: () -> Unit, modifier: Modifier = Modif
 }
 
 @Composable
-fun ActionTile(title: String, subtitle: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun ActionTile(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector = Icons.Default.Add,
+    highlight: Boolean = false,
+) {
     val scheme = MaterialTheme.colorScheme
     FocusBox(
         onClick = onClick,
@@ -237,15 +244,15 @@ fun ActionTile(title: String, subtitle: String, onClick: () -> Unit, modifier: M
         ) {
             CookieBadge(
                 size = 60.dp,
-                color = if (focused) scheme.primaryContainer else scheme.secondaryContainer,
+                color = if (focused) scheme.primaryContainer else if (highlight) scheme.tertiary else scheme.secondaryContainer,
                 lobes = 9,
                 amplitude = 0.08f,
-                spin = focused,
+                spin = focused || highlight,
             ) {
                 Icon(
-                    Icons.Default.Add,
+                    icon,
                     contentDescription = null,
-                    tint = if (focused) scheme.onPrimaryContainer else scheme.onSecondaryContainer,
+                    tint = if (focused) scheme.onPrimaryContainer else if (highlight) scheme.onTertiary else scheme.onSecondaryContainer,
                     modifier = Modifier.size(30.dp),
                 )
             }

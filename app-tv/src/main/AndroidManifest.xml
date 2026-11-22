@@ -6,8 +6,17 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.wifi" android:required="false" />
 
+    <!--
+      Needed by the in-app file picker (TVs often have no system picker):
+      Android 10 and older read shared storage with the normal permission; Android 11+ uses the
+      "All files access" switch in Settings. Only files the person ticks are ever read or sent.
+    -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
     <application
         android:allowBackup="false"
+        android:requestLegacyExternalStorage="true"
         android:banner="@drawable/tv_banner"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
