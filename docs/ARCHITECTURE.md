@@ -53,6 +53,15 @@ app-tv ─────┘
 The two apps share one application id (`com.share64.app`); a device installs the phone or the TV
 build, never both.
 
+### Phone screens
+
+The phone app has two tabs behind a floating bar: **Send** (the files you picked, then the nearby
+devices) and **Receive** (this device's name with the sharing switch, the **Scan QR code** button and
+the devices waiting for an answer). The Settings button stays at the top of both. The QR code opens as a
+bottom sheet from Send with a switch for its two uses: *Via SHARE64* (this device's pairing code) and
+*Share with anyone* (the web-mode link). Scanning happens on its own screen, reached from Receive; it
+understands both kinds of codes.
+
 ### Process model
 
 `ShareService` is a foreground service that owns the one `Share64Node`. The UIs never create a node;
@@ -91,7 +100,7 @@ with a valid HelloAck is not treated as a SHARE64 device.
 
 ### 3. QR code or typed address
 
-A device can show a QR code; another device scans it. The text inside is:
+A device can show a QR code (Send, then Use QR code); another device scans it (Receive, then Scan QR code). The text inside is:
 
 ```
 share64://c?v=1&i=<device id>&n=<name>&t=<p|t|o>&p=<port>&a=<ip>,<ip>

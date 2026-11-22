@@ -31,16 +31,19 @@ import com.share64.app.core.UpdateManager
 import com.share64.app.core.isActionable
 import com.share64.app.mobile.MainViewModel
 
-private enum class Screen(val depth: Int) { Home(0), Settings(1), About(2), Connect(1), WebShare(1) }
+private enum class Screen(val depth: Int) { Home(0), Settings(1), About(2), Scan(1) }
 
 /**
- * Home -> Settings -> About slide in the direction of travel; the QR "Connect" screen rises from the
- * bottom like a sheet. System Back goes one level up.
+ * Home -> Settings -> About slide in the direction of travel; the QR scanner rises from the bottom
+ * like a sheet. System Back goes one level up.
  */
 @Composable
 fun Share64App(vm: MainViewModel) {
     val context = LocalContext.current
     var route by rememberSaveable { mutableStateOf(Screen.Home.name) }
+    // Kept here, not in the Home screen, so the chosen tab survives a trip to Settings or the scanner.
+    var tabName by rememberSaveable { mutableStateOf(MainTab.Send.name) }
+    val tab = MainTab.entries.firstOrNull { it.name == tabName } ?: MainTab.Send
     val screen = Screen.entries.firstOrNull { it.name == route } ?: Screen.Home
     fun go(to: Screen) { route = to.name }
     BackHandler(enabled = screen != Screen.Home) {
@@ -50,10 +53,10 @@ fun Share64App(vm: MainViewModel) {
     AnimatedContent(
         targetState = screen,
         transitionSpec = {
-            if (targetState == Screen.Connect || targetState == Screen.WebShare) {
+            if (targetState == Screen.Scan) {
                 (slideInVertically(spring(0.85f, Spring.StiffnessMediumLow)) { it / 5 } + fadeIn(tween(240)) + scaleIn(tween(300), initialScale = 0.96f)) togetherWith
                     fadeOut(tween(160))
-            } else if (initialState == Screen.Connect || initialState == Screen.WebShare) {
+            } else if (initialState == Screen.Scan) {
                 fadeIn(tween(240)) togetherWith
                     (slideOutVertically(tween(280, easing = FastOutSlowInEasing)) { it / 5 } + fadeOut(tween(200)) + scaleOut(tween(280), targetScale = 0.96f))
             } else if (targetState.depth > initialState.depth) {
@@ -69,14 +72,14 @@ fun Share64App(vm: MainViewModel) {
         when (current) {
             Screen.Home -> HomeScreen(
                 vm = vm,
+                tab = tab,
+                onTabChange = { tabName = it.name },
                 onOpenSettings = { go(Screen.Settings) },
-                onOpenConnect = { go(Screen.Connect) },
-                onOpenWebShare = { go(Screen.WebShare) },
+                onOpenScan = { go(Screen.Scan) },
             )
             Screen.Settings -> SettingsScreen(vm = vm, onBack = { go(Screen.Home) }, onOpenAbout = { go(Screen.About) })
             Screen.About -> AboutScreen(onBack = { go(Screen.Settings) })
-            Screen.Connect -> ConnectScreen(vm = vm, onBack = { go(Screen.Home) })
-            Screen.WebShare -> WebShareScreen(vm = vm, onBack = { go(Screen.Home) })
+            Screen.Scan -> QrScanScreen(vm = vm, onBack = { go(Screen.Home) })
         }
     }
     // Receiving a "share with anyone" link covers every screen.

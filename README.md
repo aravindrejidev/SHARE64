@@ -136,6 +136,8 @@ No accounts. No ads. No analytics. Your files never leave your network. The inte
     <td width="50%" valign="top">
 
 #### Phone app
+- **Send and Receive** — a floating bar at the bottom switches between the two. *Send*: a card with your selected files, then the devices around you; tap one to send. *Receive*: your name, a **Scan QR code** button and the devices waiting for your OK.
+- **QR code as a bottom sheet** — rises from the bottom with a floating switch: **Via SHARE64** (pair with another SHARE64 device) or **Share with anyone** (a link any camera app can open).
 - **Material 3 design** with dynamic color (Android 12+), light, dark and **AMOLED** themes.
 - **Keep receiving in the background** — a small foreground notification keeps you visible to other devices, with a Stop button.
 - **Your download folder** — `Downloads/SHARE64` by default, or any folder you choose.

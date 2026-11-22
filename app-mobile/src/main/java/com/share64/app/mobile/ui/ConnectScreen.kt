@@ -68,32 +68,22 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.share64.app.mobile.MainUiState
 import com.share64.app.mobile.MainViewModel
 import com.share64.app.mobile.QrUiState
+import com.share64.app.mobile.WebDownloadUi
 import com.share64.network.DiscoveryStatus
 import com.share64.network.PeerDevice
 import kotlin.math.roundToInt
 
 /**
- * Pairing with a QR code, in two tabs: "Show my code" (this device's address, name and id as a code)
- * and "Scan code" (the in-app camera). Whoever scans connects at once; the other device notices the
- * visit by itself and adds the scanner back, so both sides end up seeing each other.
+ * Scanning a QR code with the in-app camera. Two kinds of codes work: another SHARE64 device's code
+ * (the two devices then see each other) and a "share with anyone" link (the files are downloaded
+ * through the app). Showing this device's own code lives in the QR sheet on the Send tab.
  */
 @Composable
-fun ConnectScreen(vm: MainViewModel, onBack: () -> Unit) {
-    val state by vm.state.collectAsStateWithLifecycle()
+fun QrScanScreen(vm: MainViewModel, onBack: () -> Unit) {
     val qr by vm.qr.collectAsStateWithLifecycle()
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    val webDownload by vm.webDownload.collectAsStateWithLifecycle()
     var torch by remember { mutableStateOf(false) }
     var showManual by remember { mutableStateOf(false) }
-    var dismissedArrival by rememberSaveable { mutableStateOf<String?>(null) }
-    // Devices that show up while this screen is open on the "show" tab are most likely the one that scanned us.
-    val knownIds = remember { state.peers.map { it.id }.toSet() }
-    val arrival: PeerDevice? =
-        if (tab == 0 && qr == QrUiState.Idle) {
-            state.peers.firstOrNull { it.id !in knownIds && it.reachable && it.id != dismissedArrival }
-        } else {
-            null
-        }
-    val paired: PeerDevice? = (qr as? QrUiState.Connected)?.peer ?: arrival
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
@@ -102,6 +92,12 @@ fun ConnectScreen(vm: MainViewModel, onBack: () -> Unit) {
         }
     }
     DisposableEffect(Unit) { onDispose { vm.resetQr() } }
+    // A "share with anyone" link was recognised: the download screen takes over, so leave the camera.
+    LaunchedEffect(webDownload) {
+        if (webDownload != WebDownloadUi.Idle) onBack()
+    }
+
+    val paired: PeerDevice? = (qr as? QrUiState.Connected)?.peer
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold { padding ->
@@ -111,41 +107,17 @@ fun ConnectScreen(vm: MainViewModel, onBack: () -> Unit) {
                     .padding(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding())
                     .padding(horizontal = 16.dp),
             ) {
-                ScreenHeader(title = "Connect", subtitle = "Pair two devices with a QR code", onBack = onBack)
+                ScreenHeader(title = "Scan QR code", subtitle = "Connect to a device or open a share link", onBack = onBack)
                 Spacer(Modifier.height(8.dp))
-                ExpressiveToggleGroup(
-                    options = listOf("Show my code", "Scan code"),
-                    selectedIndex = tab,
-                    onSelect = {
-                        tab = it
-                        torch = false
-                        vm.resetQr()
-                    },
-                )
-                Spacer(Modifier.height(16.dp))
-                AnimatedContent(
-                    targetState = tab,
+                ScanPane(
+                    qr = qr,
+                    torch = torch,
+                    onTorch = { torch = it },
+                    onCode = vm::onQrScanned,
+                    onRetry = vm::resetQr,
+                    onTypeAddress = { showManual = true },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    transitionSpec = {
-                        val dir = if (targetState > initialState) 1 else -1
-                        (slideInHorizontally(spring(0.8f, Spring.StiffnessMediumLow)) { it * dir / 3 } + fadeIn(tween(220))) togetherWith
-                            (slideOutHorizontally(tween(180)) { -it * dir / 3 } + fadeOut(tween(140)))
-                    },
-                    label = "connectTab",
-                ) { page ->
-                    if (page == 0) {
-                        ShowCodePane(state = state, onTurnOnSharing = { vm.setSharingEnabled(true) })
-                    } else {
-                        ScanPane(
-                            qr = qr,
-                            torch = torch,
-                            onTorch = { torch = it },
-                            onCode = vm::onQrScanned,
-                            onRetry = vm::resetQr,
-                            onTypeAddress = { showManual = true },
-                        )
-                    }
-                }
+                )
             }
         }
 
@@ -164,7 +136,6 @@ fun ConnectScreen(vm: MainViewModel, onBack: () -> Unit) {
                         picker.launch(arrayOf("*/*"))
                     },
                     onDone = {
-                        dismissedArrival = peer.id
                         vm.resetQr()
                         onBack()
                     },
@@ -190,11 +161,17 @@ fun ConnectScreen(vm: MainViewModel, onBack: () -> Unit) {
 // Show my code
 // ---------------------------------------------------------------------------------------------
 
+/** This device's own pairing code with its name and address. Lives in the QR sheet; the caller scrolls. */
 @Composable
-private fun ShowCodePane(state: MainUiState, onTurnOnSharing: () -> Unit) {
+internal fun ShowCodePane(
+    state: MainUiState,
+    onTurnOnSharing: () -> Unit,
+    modifier: Modifier = Modifier,
+    qrFraction: Float = 0.68f,
+) {
     val scheme = MaterialTheme.colorScheme
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -222,7 +199,7 @@ private fun ShowCodePane(state: MainUiState, onTurnOnSharing: () -> Unit) {
                         shape = RoundedCornerShape(40.dp),
                         color = Color.White,
                         shadowElevation = 10.dp,
-                        modifier = Modifier.fillMaxWidth(0.68f).aspectRatio(1f).popIn(0),
+                        modifier = Modifier.fillMaxWidth(qrFraction).aspectRatio(1f).popIn(0),
                     ) {
                         QrCodeView(text = payload, modifier = Modifier.fillMaxSize().padding(12.dp))
                     }
@@ -244,7 +221,7 @@ private fun ShowCodePane(state: MainUiState, onTurnOnSharing: () -> Unit) {
                     )
                 }
                 Text(
-                    "On the other device open SHARE64, tap Connect, choose Scan code and point its camera here. " +
+                    "On the other device open SHARE64, go to Receive, tap Scan QR code and point its camera here. " +
                         "Both devices will then see each other.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = scheme.onSurfaceVariant,
@@ -271,7 +248,7 @@ private fun Pill(text: String, container: Color, content: Color) {
 }
 
 @Composable
-private fun InfoCard(
+internal fun InfoCard(
     title: String,
     text: String,
     modifier: Modifier = Modifier,
@@ -318,6 +295,7 @@ private fun ScanPane(
     onCode: (String) -> Unit,
     onRetry: () -> Unit,
     onTypeAddress: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findComponentActivity() }
@@ -337,7 +315,7 @@ private fun ScanPane(
     val blockedForGood = refused && activity?.shouldShowRequestPermissionRationale(Manifest.permission.CAMERA) == false
 
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {

@@ -61,6 +61,9 @@ data class MainUiState(
     val peers: List<PeerDevice> = emptyList(),
     val transfers: List<TransferItem> = emptyList(),
     val offer: IncomingOffer? = null,
+    /** Every device that is waiting for this one to accept its file, newest first. */
+    val offers: List<IncomingOffer> = emptyList(),
+    /** The files ticked on the Send screen, waiting for a device (or a QR code) to be chosen. */
     val pendingFiles: List<OutgoingFile> = emptyList(),
     /** Master switch: false means no engine, no listener, no background service, no wake locks. */
     val sharingEnabled: Boolean = true,
@@ -164,7 +167,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         sharing,
     ) { node, files, received, locations, sharingOn ->
         val ordered = TransferPresenter.order(node.transfers.values)
-        val offer = ordered.firstOrNull { it.state == TransferState.OFFERED }
+        val waiting = ordered.filter { it.state == TransferState.OFFERED }
+            .map { IncomingOffer(it.id, it.name, it.peerName ?: "another device", Formatting.bytes(it.totalBytes)) }
+        val offer = waiting.firstOrNull()
         MainUiState(
             ready = node.ready,
             deviceName = node.deviceName.ifEmpty { identity.displayName },
@@ -175,7 +180,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             transfers = ordered.map {
                 TransferPresenter.present(it, received.containsKey(it.id), savedTo = locations[it.id])
             },
-            offer = offer?.let { IncomingOffer(it.id, it.name, it.peerName ?: "another device", Formatting.bytes(it.totalBytes)) },
+            offer = offer,
+            offers = waiting,
             pendingFiles = files,
             qrPayload = qrPayloadFor(node),
             sharingEnabled = sharingOn,
@@ -194,7 +200,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (uris.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
             val files = uris.map { OutgoingFiles.describe(appContext, it) }
-            if (target != null) sendTo(target, files) else pending.value = files
+            if (target != null) sendTo(target, files) else pending.value = (pending.value + files).distinctBy { it.uri.toString() }
         }
     }
 
@@ -211,6 +217,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearPending() { pending.value = emptyList() }
+
+    /** Takes one file out of the selection on the Send screen. */
+    fun removePending(file: OutgoingFile) {
+        pending.value = pending.value.filterNot { it.uri == file.uri }
+    }
 
     private suspend fun sendTo(peer: PeerDevice, files: List<OutgoingFile>) {
         val node = ShareRuntime.node.value
@@ -330,10 +341,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) { startWebShareFiles(uris.map { OutgoingFiles.describe(appContext, it) }) }
     }
 
-    /** The files waiting in the "send to" sheet become a web share instead. */
-    fun startWebShareFromPending() {
+    /** Starts a "share with anyone" session with the files selected on the Send screen (the selection stays). */
+    fun startWebShareFromSelected() {
         val files = pending.value
-        pending.value = emptyList()
         if (files.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) { startWebShareFiles(files) }
     }

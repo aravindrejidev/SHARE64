@@ -58,141 +58,6 @@ import com.share64.network.web.ClientState
 import com.share64.network.web.WebClient
 import kotlinx.coroutines.delay
 
-/**
- * "Share with anyone": for people who don't have SHARE64. Pick files, show a QR code, and anyone who
- * scans it with a normal camera app gets a web page to download them. This device's SHARE64 users who
- * scan it in the app receive the files through the app instead.
- */
-@Composable
-fun WebShareScreen(vm: MainViewModel, onBack: () -> Unit) {
-    val web by vm.webShare.collectAsStateWithLifecycle()
-    val state by vm.state.collectAsStateWithLifecycle()
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        vm.startWebShare(uris)
-    }
-    Scaffold { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding())
-                .padding(horizontal = 16.dp),
-        ) {
-            ScreenHeader(title = "Share with anyone", subtitle = "No app needed on the other side", onBack = onBack)
-            Spacer(Modifier.height(8.dp))
-            AnimatedContent(
-                targetState = web != null,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                transitionSpec = {
-                    (fadeIn(tween(220)) + scaleIn(spring(0.8f, Spring.StiffnessMediumLow), initialScale = 0.94f)) togetherWith fadeOut(tween(140))
-                },
-                label = "webShare",
-            ) { active ->
-                val session = web
-                if (active && session != null) {
-                    SessionPane(
-                        web = session,
-                        onStop = vm::stopWebShare,
-                        onAutoAllow = vm::setWebAutoAllow,
-                        onApprove = vm::approveWebClient,
-                        onDeny = vm::denyWebClient,
-                        onRemove = vm::removeWebClient,
-                    )
-                } else {
-                    IntroPane(
-                        sharingEnabled = state.sharingEnabled,
-                        hasNetwork = state.addresses.isNotEmpty(),
-                        onChoose = { picker.launch(arrayOf("*/*")) },
-                        onTurnOnSharing = { vm.setSharingEnabled(true) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
-// Before a session: what this is and how it works
-// ---------------------------------------------------------------------------------------------
-
-@Composable
-private fun IntroPane(sharingEnabled: Boolean, hasNetwork: Boolean, onChoose: () -> Unit, onTurnOnSharing: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        BouncyCard(
-            onClick = null,
-            modifier = Modifier.fillMaxWidth().popIn(0),
-            color = scheme.primaryContainer,
-            contentColor = scheme.onPrimaryContainer,
-            restRadius = 44.dp,
-        ) {
-            Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                CookieBadge(size = 72.dp, color = scheme.primary, lobes = 9, amplitude = 0.09f, spin = true) {
-                    Icon(ShareIcons.Link, contentDescription = null, tint = scheme.onPrimary, modifier = Modifier.size(34.dp))
-                }
-                Text("Friends without SHARE64 can still get your files", style = MaterialTheme.typography.headlineSmall)
-                Text(
-                    "Pick the files and show the QR code. Anyone who scans it with their normal camera, iPhone or Android, " +
-                        "opens a page in the browser and downloads them. Nothing to install.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = scheme.onPrimaryContainer.copy(alpha = 0.85f),
-                )
-            }
-        }
-        StepCard(1, "Choose files", "Photos, videos, documents, anything.", 1)
-        StepCard(2, "Show the QR code", "Your phone starts a small web page, just for this.", 2)
-        StepCard(3, "They scan and download", "You tap Allow for each new device. SHARE64 users get it inside the app.", 0)
-
-        Spacer(Modifier.height(4.dp))
-        when {
-            !sharingEnabled -> InfoBlock("Sharing is off", "Turn sharing on first.", "Turn sharing on", onTurnOnSharing)
-            !hasNetwork -> InfoBlock(
-                "No Wi-Fi or hotspot",
-                "Join a Wi-Fi network, or turn on your hotspot and let the other person join it. No internet is needed.",
-                null,
-                {},
-            )
-            else -> ExpressiveButton(onClick = onChoose, modifier = Modifier.fillMaxWidth().popIn(4)) { Text("Choose files") }
-        }
-        Text(
-            "Works on the same Wi-Fi, or on your phone's hotspot (no internet needed). Only the files you pick are shared, " +
-                "and the page is not encrypted, so you decide who gets in.",
-            style = MaterialTheme.typography.bodySmall,
-            color = scheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-        )
-    }
-}
-
-@Composable
-private fun StepCard(number: Int, title: String, text: String, paletteIndex: Int) {
-    val p = cardPalette(paletteIndex)
-    BouncyCard(
-        onClick = null,
-        modifier = Modifier.fillMaxWidth().popIn(number),
-        color = p.container,
-        contentColor = p.onContainer,
-        restRadius = 32.dp,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            CookieBadge(size = 48.dp, color = p.accent, lobes = 8, amplitude = 0.08f) {
-                Text(number.toString(), style = MaterialTheme.typography.titleLarge, color = p.onAccent)
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(text, style = MaterialTheme.typography.bodySmall, color = p.onContainer.copy(alpha = 0.8f))
-            }
-        }
-    }
-}
-
 @Composable
 private fun InfoBlock(title: String, text: String, buttonLabel: String?, onButton: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
@@ -219,14 +84,20 @@ private fun InfoBlock(title: String, text: String, buttonLabel: String?, onButto
 // A running session
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * A running "share with anyone" session: the QR code and link, the devices asking to get in (Allow /
+ * Decline), the files and a Stop button. Pass a scrolling [modifier] when it is not inside a scroll already.
+ */
 @Composable
-private fun SessionPane(
+internal fun SessionPane(
     web: WebShareUi,
     onStop: () -> Unit,
     onAutoAllow: (Boolean) -> Unit,
     onApprove: (String) -> Unit,
     onDeny: (String) -> Unit,
     onRemove: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    qrFraction: Float = 0.68f,
 ) {
     val scheme = MaterialTheme.colorScheme
     val context = LocalContext.current
@@ -242,7 +113,7 @@ private fun SessionPane(
     val pending = web.clients.count { it.state == ClientState.PENDING }
 
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -255,7 +126,7 @@ private fun SessionPane(
                     shape = RoundedCornerShape(40.dp),
                     color = Color.White,
                     shadowElevation = 10.dp,
-                    modifier = Modifier.fillMaxWidth(0.68f).aspectRatio(1f).popIn(0),
+                    modifier = Modifier.fillMaxWidth(qrFraction).aspectRatio(1f).popIn(0),
                 ) {
                     QrCodeView(text = url, modifier = Modifier.fillMaxSize().padding(12.dp))
                 }

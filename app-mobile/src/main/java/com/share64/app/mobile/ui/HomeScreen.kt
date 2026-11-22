@@ -1,36 +1,21 @@
 package com.share64.app.mobile.ui
 
 import android.Manifest
-import android.content.ActivityNotFoundException
-import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -40,29 +25,36 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.unit.dp
 import com.share64.app.mobile.MainViewModel
-import com.share64.network.DiscoveryStatus
+import com.share64.network.PeerDevice
 
 /**
- * Home, Material 3 Expressive style: a big heavy title, a status hero card, colour-blocked device
- * cards that spring in, wavy-progress transfer cards and a FAB menu with bouncy motion.
+ * The main screen: two tabs, Send and Receive, switched with the floating bar at the bottom. The big
+ * title and the Settings button stay at the top of both. The QR code opens as a sheet from the bottom.
  */
 @Composable
-fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit, onOpenConnect: () -> Unit, onOpenWebShare: () -> Unit) {
+fun HomeScreen(
+    vm: MainViewModel,
+    tab: MainTab,
+    onTabChange: (MainTab) -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenScan: () -> Unit,
+) {
     val state by vm.state.collectAsStateWithLifecycle()
     val web by vm.webShare.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
-    var fabExpanded by remember { mutableStateOf(false) }
+    var showQr by rememberSaveable { mutableStateOf(false) }
+    var qrMode by rememberSaveable { mutableIntStateOf(0) }
     var confirmStop by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -80,134 +72,102 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit, onOpenConnect: () 
     LaunchedEffect(Unit) {
         vm.messages.collect { snackbar.showSnackbar(it) }
     }
-    BackHandler(enabled = fabExpanded) { fabExpanded = false }
-    LaunchedEffect(state.sharingEnabled) { if (!state.sharingEnabled) fabExpanded = false }
+    // Files shared into SHARE64 from another app are waiting on the Send tab.
+    LaunchedEffect(state.pendingFiles.size) {
+        if (state.pendingFiles.isNotEmpty()) onTabChange(MainTab.Send)
+    }
+    BackHandler(enabled = tab == MainTab.Receive) { onTabChange(MainTab.Send) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Scaffold(
-            snackbarHost = { SnackbarHost(snackbar, modifier = Modifier.padding(end = 88.dp)) },
-        ) { padding ->
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 160.dp),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
-                    top = padding.calculateTopPadding() + 4.dp,
-                    bottom = padding.calculateBottomPadding() + 132.dp,
-                ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
-                    ScreenHeader(
-                        title = "SHARE64",
-                        subtitle = "Local Wi-Fi file sharing",
-                        trailing = {
-                            CookieIconButton(
-                                onClick = onOpenSettings,
-                                icon = Icons.Default.Settings,
-                                contentDescription = "Settings",
-                                container = scheme.primaryContainer,
-                                content = scheme.onPrimaryContainer,
-                                buttonSize = 56.dp,
-                                lobes = 9,
-                            )
-                        },
-                    )
-                }
+    fun selectFiles() {
+        vm.chooseTarget(null)
+        picker.launch(arrayOf("*/*"))
+    }
 
-                item(key = "status", span = { GridItemSpan(maxLineSpan) }) {
-                    StatusHero(
-                        state = state,
-                        onSharingChange = { on ->
-                            // Stopping with transfers running deserves a second thought.
-                            if (!on && state.activeTransfers > 0) confirmStop = true else vm.setSharingEnabled(on)
-                        },
-                    )
-                }
+    fun sendTo(peer: PeerDevice) {
+        if (state.pendingFiles.isNotEmpty()) {
+            vm.sendPendingTo(peer)
+        } else {
+            // Nothing picked yet: choose the files now and send them straight to this device.
+            vm.chooseTarget(peer)
+            picker.launch(arrayOf("*/*"))
+        }
+    }
 
-                web?.let { session ->
-                    item(key = "web-banner", span = { GridItemSpan(maxLineSpan) }) {
-                        WebShareBanner(session, onOpen = onOpenWebShare, onStop = vm::stopWebShare, modifier = Modifier.animateItem())
-                    }
-                }
+    fun changeSharing(on: Boolean) {
+        // Stopping with transfers running deserves a second thought.
+        if (!on && state.activeTransfers > 0) confirmStop = true else vm.setSharingEnabled(on)
+    }
 
-                item(key = "devices-title", span = { GridItemSpan(maxLineSpan) }) {
-                    SectionHeader(
-                        "Nearby",
-                        count = state.peers.size,
-                        actionLabel = if (state.sharingEnabled) "Connect with QR" else null,
-                        onAction = onOpenConnect,
-                    )
-                }
-                if (!state.sharingEnabled || state.peers.isEmpty()) {
-                    item(key = "devices-empty", span = { GridItemSpan(maxLineSpan) }) {
-                        EmptyDevices(
-                            searching = state.status is DiscoveryStatus.Running,
-                            sharingOff = !state.sharingEnabled,
-                        )
-                    }
-                } else {
-                    itemsIndexed(state.peers, key = { _, peer -> peer.id }) { index, peer ->
-                        DeviceCard(
-                            peer = peer,
-                            index = index,
-                            modifier = Modifier.animateItem(),
-                            onClick = {
-                                vm.chooseTarget(peer)
-                                picker.launch(arrayOf("*/*"))
-                            },
-                        )
-                    }
-                }
-
-                if (state.transfers.isNotEmpty()) {
-                    item(key = "transfers-title", span = { GridItemSpan(maxLineSpan) }) {
-                        SectionHeader("Transfers", count = state.transfers.size)
-                    }
-                    items(state.transfers, key = { it.id }, span = { GridItemSpan(maxLineSpan) }) { t ->
-                        TransferCard(
-                            item = t,
-                            modifier = Modifier.animateItem(),
-                            onCancel = { vm.cancel(t.id) },
-                            onDismiss = { vm.dismiss(t.id) },
-                            onOpen = {
-                                val uri = vm.receivedUri(t.id)
-                                if (uri == null || !openFile(context, uri)) vm.postMessage("No app can open this file")
-                            },
-                        )
-                    }
-                }
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = {
+            FloatingNavBar(
+                selected = tab,
+                onSelect = onTabChange,
+                receiveBadge = state.offers.size,
+            )
+        },
+    ) { padding ->
+        AnimatedContent(
+            targetState = tab,
+            transitionSpec = {
+                val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                (slideInHorizontally(spring(0.85f, Spring.StiffnessMediumLow)) { it * dir / 4 } + fadeIn(tween(220))) togetherWith
+                    (slideOutHorizontally(tween(200)) { -it * dir / 4 } + fadeOut(tween(140)))
+            },
+            label = "mainTab",
+        ) { current ->
+            when (current) {
+                MainTab.Send -> SendScreen(
+                    vm = vm,
+                    state = state,
+                    web = web,
+                    padding = padding,
+                    onOpenSettings = onOpenSettings,
+                    onSelectFiles = { selectFiles() },
+                    onSendTo = { sendTo(it) },
+                    onOpenQr = {
+                        qrMode = if (web != null) 1 else 0
+                        showQr = true
+                    },
+                    onOpenWebShare = {
+                        qrMode = 1
+                        showQr = true
+                    },
+                    onTurnOnSharing = { vm.setSharingEnabled(true) },
+                )
+                MainTab.Receive -> ReceiveScreen(
+                    vm = vm,
+                    state = state,
+                    padding = padding,
+                    onOpenSettings = onOpenSettings,
+                    onOpenScan = onOpenScan,
+                    onSharingChange = { changeSharing(it) },
+                    onTurnOnSharing = { vm.setSharingEnabled(true) },
+                )
             }
         }
+    }
 
-        AnimatedVisibility(visible = fabExpanded, enter = fadeIn(), exit = fadeOut()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.38f))
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                        fabExpanded = false
-                    },
-            )
-        }
-
-        if (state.sharingEnabled) {
-            ExpressiveFabMenu(
-                expanded = fabExpanded,
-                onExpandedChange = { fabExpanded = it },
-                actions = listOf(
-                    FabAction("Send files", Icons.AutoMirrored.Filled.Send) {
-                        vm.chooseTarget(null)
-                        picker.launch(arrayOf("*/*"))
-                    },
-                    FabAction("Connect with QR", ShareIcons.QrCode) { onOpenConnect() },
-                    FabAction("Share with anyone", ShareIcons.Link) { onOpenWebShare() },
-                ),
-                modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp),
-            )
-        }
+    if (showQr) {
+        QrShareSheet(
+            state = state,
+            web = web,
+            initialMode = qrMode,
+            onDismiss = { showQr = false },
+            onSelectFiles = { selectFiles() },
+            onStartWebShare = { vm.startWebShareFromSelected() },
+            onStopWebShare = { vm.stopWebShare() },
+            onAutoAllow = vm::setWebAutoAllow,
+            onApprove = vm::approveWebClient,
+            onDeny = vm::denyWebClient,
+            onRemove = vm::removeWebClient,
+            onTurnOnSharing = { vm.setSharingEnabled(true) },
+            onPeerConnected = { peer ->
+                showQr = false
+                vm.postMessage("${peer.displayName} connected")
+            },
+        )
     }
 
     if (confirmStop) {
@@ -236,36 +196,14 @@ fun HomeScreen(vm: MainViewModel, onOpenSettings: () -> Unit, onOpenConnect: () 
         )
     }
 
-    if (state.pendingFiles.isNotEmpty()) {
-        SendSheet(
-            files = state.pendingFiles,
-            peers = state.peers,
-            onPick = { vm.sendPendingTo(it) },
-            onManual = onOpenConnect,
-            onWebShare = {
-                vm.startWebShareFromPending()
-                onOpenWebShare()
-            },
-            onDismiss = { vm.clearPending() },
-        )
-    }
-
-    state.offer?.let { offer ->
-        OfferDialog(
-            offer = offer,
-            onAccept = { vm.accept(offer.id) },
-            onDecline = { vm.decline(offer.id) },
-        )
-    }
-}
-
-private fun openFile(context: Context, uri: Uri): Boolean {
-    val mime = context.contentResolver.getType(uri) ?: "*/*"
-    val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    return try {
-        context.startActivity(intent)
-        true
-    } catch (_: ActivityNotFoundException) {
-        false
+    // On the Receive tab the offers are cards with Accept and Decline; elsewhere a dialog asks.
+    if (tab != MainTab.Receive) {
+        state.offer?.let { offer ->
+            OfferDialog(
+                offer = offer,
+                onAccept = { vm.accept(offer.id) },
+                onDecline = { vm.decline(offer.id) },
+            )
+        }
     }
 }
